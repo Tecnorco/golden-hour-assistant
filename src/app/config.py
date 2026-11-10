@@ -50,6 +50,9 @@ class Settings(BaseModel):
     agent_max_steps: int
     retrieval_top_k: int
     retrieval_min_score: float
+    chunk_target_tokens: int
+    chunk_min_tokens: int
+    chunk_overlap_tokens: int
     max_input_chars: int
 
     # Paths
@@ -92,7 +95,10 @@ def get_settings() -> Settings:
         router_confidence_threshold=float(_env("GHA_ROUTER_CONFIDENCE_THRESHOLD", "0.7")),
         agent_max_steps=int(_env("GHA_AGENT_MAX_STEPS", "8")),
         retrieval_top_k=int(_env("GHA_RETRIEVAL_TOP_K", "4")),
-        retrieval_min_score=float(_env("GHA_RETRIEVAL_MIN_SCORE", "0.55")),
+        retrieval_min_score=float(_env("GHA_RETRIEVAL_MIN_SCORE", "0.62")),
+        chunk_target_tokens=int(_env("GHA_CHUNK_TARGET_TOKENS", "300")),
+        chunk_min_tokens=int(_env("GHA_CHUNK_MIN_TOKENS", "40")),
+        chunk_overlap_tokens=int(_env("GHA_CHUNK_OVERLAP_TOKENS", "50")),
         max_input_chars=int(_env("GHA_MAX_INPUT_CHARS", "8000")),
         data_dir=Path(_env("GHA_DATA_DIR", str(ROOT / "data"))),
         prompts_dir=Path(_env("GHA_PROMPTS_DIR", str(ROOT / "prompts"))),
