@@ -158,14 +158,27 @@ class GeminiLLM:
         self.s = settings or get_settings()
         if self.s.api_key is None:
             raise LLMError("GEMINI_API_KEY is not set. Copy .env.example to .env and add your key.")
-        self._client = genai.Client(
-            api_key=self.s.api_key.get_secret_value(),
-            http_options=types.HttpOptions(
-                timeout=int(self.s.llm_timeout_s * 1000),
-                # We retry ourselves (below) so the policy is visible and traced.
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
+        self._client: genai.Client | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def client(self) -> genai.Client:
+        """One SDK client per event loop. The SDK's async HTTP session is bound to
+        the loop that first used it, so reusing it from a new `asyncio.run()`
+        (CLI commands, Streamlit button clicks) fails with "Event loop is closed"."""
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._loop is not loop:
+            assert self.s.api_key is not None
+            self._client = genai.Client(
+                api_key=self.s.api_key.get_secret_value(),
+                http_options=types.HttpOptions(
+                    timeout=int(self.s.llm_timeout_s * 1000),
+                    # We retry ourselves (see _with_retry) so the policy is visible and traced.
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
+            self._loop = loop
+        return self._client
 
     async def _with_retry(self, fn: Any, what: str) -> Any:
         attempts = max(1, self.s.llm_retry_attempts)
@@ -207,7 +220,7 @@ class GeminiLLM:
         with span(f"llm.{prompt_name}", input={"model": model, "turns": len(contents)}) as sp:
             t0 = time.perf_counter()
             resp = await self._with_retry(
-                lambda: self._client.aio.models.generate_content(model=model, contents=contents, config=config),
+                lambda: self.client.aio.models.generate_content(model=model, contents=contents, config=config),
                 f"generate({prompt_name})",
             )
             latency = (time.perf_counter() - t0) * 1000
@@ -242,7 +255,7 @@ class GeminiLLM:
         model = self.s.embedding_model
         with span("llm.embed", input={"model": model, "n": len(texts), "task_type": task_type}):
             resp = await self._with_retry(
-                lambda: self._client.aio.models.embed_content(
+                lambda: self.client.aio.models.embed_content(
                     model=model,
                     contents=texts,
                     config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=self.s.embedding_dim),

@@ -100,3 +100,19 @@ def test_fake_llm_structured_and_traced(sink):
     resp = asyncio.run(fake.generate(prompt_name="extractor", system="s", turns="t", schema=ExtractedFields))
     assert resp.parsed.location == "Riverbend"
     assert any(s.name == "llm.extractor" and s.tokens_in == 10 for s in sink.spans)
+
+
+def test_client_is_rebuilt_per_event_loop():
+    llm = _llm()
+
+    async def get():
+        return llm.client
+
+    first = asyncio.run(get())
+    second = asyncio.run(get())
+    assert first is not second  # a new loop gets a fresh client
+
+    async def twice():
+        return llm.client is llm.client
+
+    assert asyncio.run(twice())  # same loop reuses it
