@@ -1,0 +1,73 @@
+# Retrieval eval: question -> where the answer lives.
+# A hit = some chunk in the top k comes from `source` AND contains `phrase`.
+# Matching on a phrase (not a chunk id) keeps pairs valid when chunking settings change.
+pairs:
+  - q: Can I get my deposit back if I cancel?
+    source: cancellation-and-rescheduling
+    phrase: "30% deposit is non-refundable"
+  - q: How much notice do I need to reschedule a portrait session for free?
+    source: cancellation-and-rescheduling
+    phrase: "**72 hours**"
+  - q: We need to move our wedding date and it's two months away. Is there a fee?
+    source: cancellation-and-rescheduling
+    phrase: "**$200 rescheduling fee**"
+  - q: What happens if the photographer gets sick on our day?
+    source: cancellation-and-rescheduling
+    phrase: "including your deposit"
+  - q: When will I get my portrait photos back?
+    source: delivery-timelines
+    phrase: "14 calendar days"
+  - q: How long until we receive our wedding gallery?
+    source: delivery-timelines
+    phrase: "within **6 weeks**"
+  - q: Can I get my photos faster? I need them for holiday cards.
+    source: delivery-timelines
+    phrase: "**within 5 days**"
+  - q: How long does the online gallery stay available?
+    source: delivery-timelines
+    phrase: "**12 months**"
+  - q: Am I allowed to post the photos on Instagram?
+    source: usage-and-print-rights
+    phrase: "Share your photos on social media"
+  - q: Do you give clients the raw unedited files?
+    source: usage-and-print-rights
+    phrase: "We do not provide unedited raw files"
+  - q: Can our company use the event photos in our marketing?
+    source: usage-and-print-rights
+    phrase: "**commercial license**"
+  - q: What should our family wear for photos? Should we all match?
+    source: what-to-wear-and-expect
+    phrase: "colour palette"
+  - q: Can I bring my dog to the session?
+    source: what-to-wear-and-expect
+    phrase: "Pets are welcome"
+  - q: What payment methods do you accept?
+    source: deposits-and-payment
+    phrase: "Zelle"
+  - q: When is the rest of the wedding balance due?
+    source: deposits-and-payment
+    phrase: "**30 days** before the wedding"
+  - q: Do you charge for travel to my town?
+    source: deposits-and-payment
+    phrase: "$1.50 per mile"
+  - q: Is a Saturday session more expensive?
+    source: deposits-and-payment
+    phrase: "10% surcharge"
+  - q: What happens if it rains on the day of our outdoor portrait session?
+    source: weather-and-backup-plans
+    phrase: "**48 hours**"
+  - q: Do you have a backup plan if it rains at our wedding?
+    source: weather-and-backup-plans
+    phrase: "rain plan"
+  - q: Can you give me a discount?
+    source: deposits-and-payment
+    phrase: "We do not offer discounts"
+
+# Off-topic questions: nothing should score above the threshold, so the agent
+# says "I don't know" and escalates instead of citing something irrelevant.
+negatives:
+  - Do you rent out drone equipment?
+  - Can you recommend a good pizza place near the studio?
+  - Can you fix my laptop screen?
+  - What is the capital of Australia?
+  - Do you sell wedding dresses?

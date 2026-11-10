@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.adapters.eml import EmlAdapter
 from app.config import get_settings
+from app.models import new_id, utcnow
 from app.observability import tracing
 from app.store import Store
 
@@ -57,6 +58,70 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_index(args: argparse.Namespace) -> int:
+    from app.llm.client import GeminiLLM
+    from app.rag import make_embedder
+    from app.rag.retriever import build_index
+
+    settings = get_settings()
+    _store()
+    embedder = make_embedder(settings, GeminiLLM(settings))
+
+    async def run() -> None:
+        with tracing.trace(new_id("index"), name="index"):
+            store = await build_index(settings, embedder)
+        store.save(settings.index_dir)
+        print(f"Indexed {store.meta['chunks']} chunks from {store.meta['documents']} documents "
+              f"-> {settings.index_dir} ({embedder.api_calls} embedding API call(s), rest from cache)")
+
+    asyncio.run(run())
+    return 0
+
+
+def cmd_retrieve(args: argparse.Namespace) -> int:
+    from app.llm.client import GeminiLLM
+    from app.rag import load_retriever
+
+    settings = get_settings()
+    _store()
+    retriever = load_retriever(settings, GeminiLLM(settings))
+
+    async def run() -> None:
+        with tracing.trace(new_id("retrieve"), name="retrieve"):
+            hits = await retriever.retrieve(args.query, k=args.k, min_score=-1.0)
+        for h in hits:
+            mark = " " if h.score >= retriever.min_score else "x"  # x = below threshold, would not be used
+            print(f"{mark} {h.score:.3f}  {h.chunk_id}")
+
+    asyncio.run(run())
+    return 0
+
+
+def cmd_eval_retrieval(args: argparse.Namespace) -> int:
+    from app.evaluation.retrieval import load_pairs, run_retrieval_eval, to_markdown
+    from app.llm.client import GeminiLLM
+    from app.rag import load_retriever
+
+    settings = get_settings()
+    _store()
+    retriever = load_retriever(settings, GeminiLLM(settings))
+    data = load_pairs(settings.data_dir.parent / "evals" / "retrieval_pairs.yaml")
+
+    async def run() -> None:
+        with tracing.trace(new_id("reval"), name="eval_retrieval"):
+            report = await run_retrieval_eval(retriever, data, k=args.k)
+        md = to_markdown(report)
+        settings.reports_dir.mkdir(parents=True, exist_ok=True)
+        path = settings.reports_dir / f"retrieval-{utcnow().strftime('%Y%m%d-%H%M%S')}.md"
+        path.write_text(md, encoding="utf-8")
+        (settings.reports_dir / f"{path.stem}.json").write_text(report.model_dump_json(indent=1), encoding="utf-8")
+        print(md)
+        print(f"Saved {path}")
+
+    asyncio.run(run())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Golden Hour Assistant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -68,6 +133,18 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("extract", help="run field extraction on .eml files (calls Gemini)")
     p.add_argument("paths", nargs="*")
     p.set_defaults(func=cmd_extract)
+
+    p = sub.add_parser("index", help="chunk + embed data/docs into the vector index")
+    p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("retrieve", help="show top chunks and scores for a query")
+    p.add_argument("query")
+    p.add_argument("-k", type=int, default=5)
+    p.set_defaults(func=cmd_retrieve)
+
+    p = sub.add_parser("eval-retrieval", help="hit rate @k on evals/retrieval_pairs.yaml")
+    p.add_argument("-k", type=int, default=4)
+    p.set_defaults(func=cmd_eval_retrieval)
 
     args = parser.parse_args(argv)
     return int(args.func(args))
