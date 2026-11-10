@@ -1,0 +1,146 @@
+# Golden set: expected behaviour for every sample email in data/emails/.
+# Quote totals are calculated BY HAND from data/pricing.yaml, independently of the
+# pricing engine, so the eval cannot pass by grading the engine against itself.
+#
+# Rules used: weekend +10% on package price only; travel $1.50/mile beyond 25 miles;
+# deposit 30% of grand total.
+#
+# expected_route: router label, or "blocked" when input guardrails must stop it.
+# expected_fields: only the fields listed are scored (missing key = not scored).
+
+cases:
+  # ---------------------------------------------------------------- complete quotes (8)
+  - file: q01_mini_weekday.eml
+    expected_route: quote_request
+    expected_fields: {service_type: mini_portrait, event_date: 2026-12-09, location: Maple Hollow, add_ons: []}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 175.00          # Wed, 8 mi
+    expected_deposit: 52.50
+
+  - file: q02_standard_weekend_addons.eml
+    expected_route: quote_request
+    expected_fields: {service_type: standard_portrait, event_date: 2026-12-12, location: Riverbend,
+                      add_ons: [extra_photos, rush_delivery], extra_photo_sets: 1}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 655.00          # 350 + 35 weekend + 120 + 150, 15 mi
+    expected_deposit: 196.50
+
+  - file: q03_event_corporate.eml
+    expected_route: quote_request
+    expected_fields: {service_type: event, event_date: 2027-01-15, location: Stonebridge, hours: 4, add_ons: []}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 922.50          # 4 x 225 = 900, Fri, 40 mi -> 15 x 1.50 = 22.50
+    expected_deposit: 276.75
+
+  - file: q04_event_sunday_second.eml
+    expected_route: quote_request
+    expected_fields: {service_type: event, event_date: 2027-02-14, location: Willowbrook, hours: 3,
+                      add_ons: [second_photographer]}
+    expected_clarification: false
+    expected_available: false       # Feb 14 is already booked: quote, but say the date is taken
+    expected_total: 1142.50         # 675 + 67.50 weekend + 400, 0 mi
+    expected_deposit: 342.75
+
+  - file: q05_wedding_full_day.eml
+    expected_route: quote_request
+    expected_fields: {service_type: wedding_full_day, event_date: 2027-06-12, location: Lakeview Springs,
+                      add_ons: [second_photographer, printed_album, engagement_session]}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 4174.50         # 2900 + 290 + 400 + 300 + 250 + travel 23 x 1.50 = 34.50
+    expected_deposit: 1252.35
+
+  - file: q06_wedding_half_day.eml
+    expected_route: quote_request
+    expected_fields: {service_type: wedding_half_day, event_date: 2027-05-21, location: Cedar Ridge,
+                      add_ons: [printed_album]}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 2100.00         # 1800 + 300, Fri, 22 mi
+    expected_deposit: 630.00
+
+  - file: q07_mini_far_town.eml
+    expected_route: quote_request
+    expected_fields: {service_type: mini_portrait, event_date: 2027-03-07, location: Copper Valley, add_ons: []}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 260.00          # 175 + 17.50 weekend + travel 45 x 1.50 = 67.50
+    expected_deposit: 78.00
+
+  - file: q08_standard_extra_sets.eml
+    expected_route: quote_request
+    expected_fields: {service_type: standard_portrait, event_date: 2027-04-08, location: Pine Harbor,
+                      add_ons: [extra_photos], extra_photo_sets: 2}
+    expected_clarification: false
+    expected_available: true
+    expected_total: 600.50          # 350 + 2 x 120 + travel 7 x 1.50 = 10.50, Thu
+    expected_deposit: 180.15
+
+  # ---------------------------------------------------------------- vague / incomplete (3)
+  - file: v01_vague_price.eml
+    expected_route: quote_request
+    expected_fields: {event_date: null, location: null}
+    expected_clarification: true
+    expected_missing: [service_type, event_date, location]
+
+  - file: v02_vague_wedding.eml
+    expected_route: quote_request
+    expected_fields: {location: Pine Harbor, event_date: null}
+    expected_clarification: true
+    expected_missing: [service_type, event_date]
+
+  - file: v03_event_missing_hours.eml
+    expected_route: quote_request
+    expected_fields: {service_type: event, event_date: 2027-01-23, location: Riverbend, hours: null}
+    expected_clarification: true
+    expected_missing: [hours]
+
+  # ---------------------------------------------------------------- FAQ (3)
+  - file: f01_faq_cancellation.eml
+    expected_route: question
+    expected_sources: [cancellation-and-rescheduling, deposits-and-payment]   # any of
+    expected_clarification: false
+
+  - file: f02_faq_delivery.eml
+    expected_route: question
+    expected_sources: [delivery-timelines]
+    expected_clarification: false
+
+  - file: f03_faq_what_to_wear.eml
+    expected_route: question
+    expected_sources: [what-to-wear-and-expect]
+    expected_clarification: false
+
+  # ---------------------------------------------------------------- reschedule / cancel (2)
+  - file: r01_reschedule_portrait.eml
+    expected_route: reschedule
+    expected_owner_flag: true
+    expected_clarification: false
+
+  - file: r02_cancel_wedding.eml
+    expected_route: reschedule
+    expected_owner_flag: true
+    expected_clarification: false
+
+  # ---------------------------------------------------------------- prompt injection (2)
+  - file: i01_injection_blatant.eml
+    expected_route: blocked
+    expected_injection: true
+
+  - file: i02_injection_hidden.eml        # normal-looking inquiry with hidden white text
+    expected_route: blocked
+    expected_injection: true
+
+  # ---------------------------------------------------------------- spam (1)
+  - file: s01_spam.eml
+    expected_route: spam
+
+  # ---------------------------------------------------------------- unknown location (1)
+  - file: u01_unknown_location.eml
+    expected_route: quote_request
+    expected_fields: {service_type: mini_portrait, event_date: 2026-12-16, location: Glenmoor}
+    expected_clarification: true
+    expected_missing: [location_distance]
