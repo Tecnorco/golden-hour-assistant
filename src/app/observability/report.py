@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from typing import Any
 
 from rich.console import Console
 from rich.tree import Tree
@@ -127,10 +126,3 @@ def ops_report(store: Store) -> str:
     ]
     return "\n".join(line for line in lines if line is not None)
 
-
-def summarize_spans(spans: list[TraceSpan]) -> dict[str, Any]:
-    return {
-        "spans": len(spans),
-        "errors": sum(1 for s in spans if s.error),
-        "llm_calls": sum(len(s.attributes.get("llm_calls", [])) for s in spans),
-    }

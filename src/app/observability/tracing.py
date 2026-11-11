@@ -44,10 +44,6 @@ def set_sink(sink: SpanSink) -> None:
     _sink = sink
 
 
-def get_sink() -> SpanSink:
-    return _sink
-
-
 def current_span() -> TraceSpan | None:
     return _current.get()
 

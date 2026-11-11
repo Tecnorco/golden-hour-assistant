@@ -12,7 +12,6 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 from app.config import Settings, get_settings
 

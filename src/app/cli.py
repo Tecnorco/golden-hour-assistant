@@ -122,83 +122,6 @@ def cmd_eval_retrieval(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_quote(args: argparse.Namespace) -> int:
-    """Phase 3 harness: extract -> quote agent, with in-process tools."""
-    from app.agents.extractor import extract_fields
-    from app.agents.quote_agent import AgentDeps, load_brand_voice, run_quote_agent
-    from app.llm.client import GeminiLLM
-    from app.rag import load_retriever
-    from app.tools import LocalToolbox, ToolContext
-
-    settings = get_settings()
-    store = _store()
-    llm = GeminiLLM(settings)
-    deps = AgentDeps(
-        llm=llm,
-        toolbox=LocalToolbox(ToolContext.from_data_dir(settings.data_dir, save_draft_fn=store.add_draft)),
-        retriever=load_retriever(settings, llm),
-        brand_voice=load_brand_voice(settings.data_dir),
-        max_steps=settings.agent_max_steps,
-    )
-    adapter = EmlAdapter()
-
-    async def run() -> None:
-        for path in _emails(args.paths):
-            inq = adapter.parse(path)
-            store.add_inquiry(inq)
-            with tracing.trace(inq.id, name="quote", input={"file": path.name}) as root:
-                fields = await extract_fields(inq, llm)
-                res = await run_quote_agent(inq, fields, deps)
-                root.output = res.status
-            quote = next((r.result for r in reversed(res.tool_calls) if r.name == "calculate_quote" and r.error is None), None)
-            print(f"\n=== {path.name}  [{inq.id}]  status={res.status} steps={res.steps} "
-                  f"needs_info={res.draft.needs_info if res.draft else '-'} "
-                  f"total={quote['total'] if quote else '-'} {res.reason} {res.issues or ''}")
-            print("tools:", " -> ".join(r.name + ("!" if r.error else "") for r in res.tool_calls))
-            if res.draft and not args.quiet:
-                print(f"Subject: {res.draft.subject}\n{res.draft.body}\nsources: {res.draft.sources}")
-
-    asyncio.run(run())
-    return 0
-
-
-async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> list:
-    """Run the full pipeline over .eml files. Business tools are reached over MCP."""
-    from app.agents.base import AgentDeps, load_brand_voice
-    from app.guardrails.input import make_input_guard
-    from app.guardrails.output import output_guard
-    from app.guardrails.repair import make_repairer
-    from app.llm.client import GeminiLLM
-    from app.mcp_server.client import MCPToolbox, server_params
-    from app.orchestrator import Pipeline
-    from app.rag import load_retriever
-
-    settings = get_settings()
-    store = _store()
-    llm = GeminiLLM(settings)
-    retriever = load_retriever(settings, llm)
-    adapter = EmlAdapter()
-    outcomes = []
-    async with MCPToolbox(server_params(settings.data_dir, settings.db_path)) as toolbox:
-        deps = AgentDeps(llm=llm, toolbox=toolbox, retriever=retriever,
-                         brand_voice=load_brand_voice(settings.data_dir), max_steps=settings.agent_max_steps)
-        pipeline = Pipeline(
-            store=store, deps=deps, settings=settings,
-            input_guard=make_input_guard(llm, settings),
-            output_guard=output_guard,
-            repair=make_repairer(deps),
-        )
-        for path in paths:
-            out = await pipeline.process(adapter.parse(path))
-            outcomes.append((path, out))
-            label = f"{out.route.label}({out.route.confidence:.2f})" if out.route else "-"
-            flags = ("needs_info " if out.needs_info else "") + ("flag_owner" if out.flag_owner else "")
-            print(f"{path.name:34s} {out.inquiry_id}  {label:24s} {out.status.value:17s} {flags:22s} {out.reason[:70]}")
-            if verbose and out.draft:
-                print(f"    Subject: {out.draft.subject}\n    " + out.draft.body.replace("\n", "\n    "))
-    return outcomes
-
-
 def cmd_run(args: argparse.Namespace) -> int:
     asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose))
     return 0
@@ -370,11 +293,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--edited-file", help="send this text instead of the draft (edit and approve)")
     p.add_argument("--note", default="")
     p.set_defaults(func=cmd_decide)
-
-    p = sub.add_parser("quote", help="run extraction + quote agent on .eml files (calls Gemini)")
-    p.add_argument("paths", nargs="*")
-    p.add_argument("-q", "--quiet", action="store_true", help="do not print draft bodies")
-    p.set_defaults(func=cmd_quote)
 
     p = sub.add_parser("index", help="chunk + embed data/docs into the vector index")
     p.set_defaults(func=cmd_index)
