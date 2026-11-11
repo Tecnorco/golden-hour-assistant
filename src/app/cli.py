@@ -315,6 +315,12 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from app.doctor import main as doctor
+
+    return doctor(offline=args.offline, quick=args.quick)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Golden Hour Assistant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -348,6 +354,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report", help="operations report: volume, routes, escalations, decisions, cost, latency")
     p.add_argument("--db")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("doctor", help="check config, data, index, MCP, Gemini and one end-to-end run")
+    p.add_argument("--offline", action="store_true", help="skip checks that call the Gemini API")
+    p.add_argument("--quick", action="store_true", help="skip the end-to-end pipeline run")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("queue", help="list inquiries (optionally by status)")
     p.add_argument("--status", choices=[s.value for s in InquiryStatus])

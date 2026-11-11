@@ -1,11 +1,14 @@
 # Golden Hour Assistant. Targets are added phase by phase.
 PY := .venv/bin/python
 
-.PHONY: setup index run ui queue mcp-demo eval compare report test test-live extract eval-retrieval
+.PHONY: setup doctor index run ui queue mcp-demo eval compare report test test-live extract eval-retrieval
 
 setup:            ## create .venv and install dependencies (needs uv)
 	uv sync
 	@test -f .env || (cp .env.example .env && echo "Created .env - add your GEMINI_API_KEY")
+
+doctor:           ## check config, data, index, MCP server, Gemini access and one end-to-end run
+	$(PY) -m app.cli doctor
 
 index:            ## chunk + embed policy docs into var/index (calls Gemini, cached)
 	$(PY) -m app.cli index
