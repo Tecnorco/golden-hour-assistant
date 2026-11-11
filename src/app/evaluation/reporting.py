@@ -27,6 +27,7 @@ METRIC_LABELS = [
     ("groundedness_rate", "Groundedness (judge score >= 4)", "pct"),
     ("groundedness_mean_score", "Groundedness mean score (1-5)", "raw"),
     ("addresses_request_rate", "Draft addresses the request (judge)", "pct"),
+    ("judge_errors", "Cases not judged (judge call failed)", "raw"),
     ("retrieval_hit_rate", "Retrieval hit rate @4", "pct"),
     ("retrieval_mrr", "Retrieval MRR @4", "raw"),
     ("owner_queue_rate", "Sent to owner queue", "pct"),
@@ -78,7 +79,7 @@ def to_markdown(r: EvalReport) -> str:
         clar = f"{c.expected_clarification} / {c.needs_info}" if c.expected_clarification is not None else ""
         lines.append(
             f"| {c.file} | {c.expected_route} | {'' if c.route_ok else '❌ '}{c.predicted_route} | {c.status} | {total} | "
-            f"{clar} | {c.judge.score if c.judge else '-'} | {c.latency_ms / 1000:.1f}s | ${c.cost_usd:.4f} |"
+            f"{clar} | {c.judge.score if c.judge else ('error' if c.judge_error else '-')} | {c.latency_ms / 1000:.1f}s | ${c.cost_usd:.4f} |"
         )
 
     problems = []
@@ -93,6 +94,8 @@ def to_markdown(r: EvalReport) -> str:
             issues.append(f"missing details: expected {c.expected_missing}, got {c.actual_missing}")
         if c.status == "OWNER_QUEUE":
             issues.append(f"owner queue: {c.reason}")
+        if c.judge_error:
+            issues.append(f"not judged: {c.judge_error}")
         if c.judge and (not c.judge.grounded or c.judge.unsupported_claims):
             issues.append(f"judge {c.judge.score}/5: {c.judge.unsupported_claims} - {c.judge.reasoning}")
         if issues:
@@ -102,7 +105,7 @@ def to_markdown(r: EvalReport) -> str:
     return "\n".join(lines)
 
 
-LOWER_IS_BETTER = {"unapproved_sends", "false_block_rate", "owner_queue_rate", "avg_latency_s", "avg_cost_usd", "total_cost_usd"}
+LOWER_IS_BETTER = {"judge_errors", "unapproved_sends", "false_block_rate", "owner_queue_rate", "avg_latency_s", "avg_cost_usd", "total_cost_usd"}
 NOISY = {"avg_latency_s", "avg_cost_usd", "total_cost_usd"}
 
 
