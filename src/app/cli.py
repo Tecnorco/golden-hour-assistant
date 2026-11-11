@@ -162,6 +162,40 @@ def cmd_quote(args: argparse.Namespace) -> int:
     return 0
 
 
+async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> list:
+    """Run the full pipeline over .eml files. Business tools are reached over MCP."""
+    from app.agents.base import AgentDeps, load_brand_voice
+    from app.llm.client import GeminiLLM
+    from app.mcp_server.client import MCPToolbox, server_params
+    from app.orchestrator import Pipeline
+    from app.rag import load_retriever
+
+    settings = get_settings()
+    store = _store()
+    llm = GeminiLLM(settings)
+    retriever = load_retriever(settings, llm)
+    adapter = EmlAdapter()
+    outcomes = []
+    async with MCPToolbox(server_params(settings.data_dir, settings.db_path)) as toolbox:
+        deps = AgentDeps(llm=llm, toolbox=toolbox, retriever=retriever,
+                         brand_voice=load_brand_voice(settings.data_dir), max_steps=settings.agent_max_steps)
+        pipeline = Pipeline(store=store, deps=deps, settings=settings)
+        for path in paths:
+            out = await pipeline.process(adapter.parse(path))
+            outcomes.append((path, out))
+            label = f"{out.route.label}({out.route.confidence:.2f})" if out.route else "-"
+            flags = ("needs_info " if out.needs_info else "") + ("flag_owner" if out.flag_owner else "")
+            print(f"{path.name:34s} {out.inquiry_id}  {label:24s} {out.status.value:17s} {flags:22s} {out.reason[:70]}")
+            if verbose and out.draft:
+                print(f"    Subject: {out.draft.subject}\n    " + out.draft.body.replace("\n", "\n    "))
+    return outcomes
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Golden Hour Assistant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -173,6 +207,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("extract", help="run field extraction on .eml files (calls Gemini)")
     p.add_argument("paths", nargs="*")
     p.set_defaults(func=cmd_extract)
+
+    p = sub.add_parser("run", help="process .eml files through the full pipeline (calls Gemini, tools via MCP)")
+    p.add_argument("paths", nargs="*")
+    p.add_argument("-v", "--verbose", action="store_true", help="print drafts")
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("quote", help="run extraction + quote agent on .eml files (calls Gemini)")
     p.add_argument("paths", nargs="*")
