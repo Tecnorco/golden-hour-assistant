@@ -1,6 +1,8 @@
 """Spawns the real MCP server over stdio. No API key needed."""
 
 import asyncio
+
+import pytest
 from datetime import date
 from pathlib import Path
 
@@ -92,3 +94,69 @@ def test_quote_agent_runs_through_mcp(tmp_path):
     assert quote["total"] == 175.0
     stored = Store(db).latest_draft(inq.id)  # persisted by the MCP server process
     assert stored and stored.inquiry_id == inq.id and stored.tool_results
+
+
+def _server_pids() -> list[int]:
+    """Child processes of this test process running the MCP server (Linux /proc)."""
+    import os
+
+    me, pids = os.getpid(), []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            ppid = int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            cmd = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode()
+        except (OSError, IndexError, ValueError):
+            continue
+        if ppid == me and "app.mcp_server.server" in cmd:
+            pids.append(int(entry.name))
+    return pids
+
+
+@pytest.mark.skipif(not Path("/proc").exists(), reason="needs /proc to find the server process")
+def test_dead_server_is_restarted_once_and_the_call_succeeds(sink):
+    import os
+    import signal
+
+    async def go(tb):
+        assert (await tb.call("lookup_distance", {"town": "Riverbend"}))["distance_miles"] == 15.0
+        (pid,) = _server_pids()
+        os.kill(pid, signal.SIGKILL)  # the server crashes mid-run
+        await asyncio.sleep(0.3)
+        r = await tb.call("lookup_distance", {"town": "Riverbend"})
+        assert r["distance_miles"] == 15.0
+        assert tb.restarts == 1 and _server_pids() and _server_pids() != [pid]
+        return r
+
+    asyncio.run(_with_toolbox(go))
+    assert any(s.name == "mcp.restart" for s in sink.spans)  # the restart is visible in traces
+
+
+@pytest.mark.skipif(not Path("/proc").exists(), reason="needs /proc to find the server process")
+def test_concurrent_calls_after_a_crash_restart_only_once():
+    import os
+    import signal
+
+    async def go(tb):
+        (pid,) = _server_pids()
+        os.kill(pid, signal.SIGKILL)
+        await asyncio.sleep(0.3)
+        results = await asyncio.gather(*(tb.call("lookup_distance", {"town": t})
+                                         for t in ["Riverbend", "Ashford", "Fox Run", "Willowbrook"]))
+        assert [r["distance_miles"] for r in results] == [15.0, 25.0, 55.0, 0.0]
+        assert tb.restarts == 1
+
+    asyncio.run(_with_toolbox(go))
+
+
+def test_non_connection_errors_are_not_retried(monkeypatch):
+    async def go(tb):
+        async def broken(*a, **k):
+            raise ValueError("bad argument encoding")
+        monkeypatch.setattr(tb.session, "call_tool", broken)
+        with pytest.raises(ValueError):
+            await tb.call("lookup_distance", {"town": "Riverbend"})
+        assert tb.restarts == 0
+
+    asyncio.run(_with_toolbox(go))
