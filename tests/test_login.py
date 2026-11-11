@@ -155,3 +155,8 @@ def test_reset_demo_restores_snapshot_after_approval(tmp_path, monkeypatch):
         assert c.execute("SELECT status FROM inquiries WHERE id=?", (inq.id,)).fetchone()[0] == "PENDING_APPROVAL"
     assert not list(get_settings().outbox_dir.glob("*.eml"))
     assert "Demo data reset" in html_text(at)
+
+
+def test_login_page_shows_the_logo():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert 'src="app/static/logo.png"' in html_text(at)

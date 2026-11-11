@@ -154,3 +154,22 @@ def test_interrupted_item_can_be_taken_over(seeded):
     assert "interrupted" in html_text(at)
     at.button(key="to_owner").click().run()
     assert store.get_status(stuck.id) == "OWNER_QUEUE"
+
+
+def test_branding_logo_and_favicon(seeded):
+    root = Path(APP).parents[1]
+    assert (root / "ui" / "static" / "logo.png").stat().st_size > 10_000
+    assert (root / "ui" / "static" / "favicon.png").exists()
+    assert 'page_icon=str(STATIC / "favicon.png")' in Path(APP).read_text()
+    page = html_text(_inbox())
+    assert 'src="app/static/logo.png"' in page and "Golden Hour Photography" in page
+
+
+def test_policy_excerpts_drop_markdown_marks():
+    import re as _re
+
+    src = Path(APP).read_text()
+    body = src[src.index("def plain("):src.index("\n\n\ndef kv(")]
+    ns = {"re": _re}
+    exec(body, ns)  # noqa: S102 - test-only: evaluate the small pure helper in isolation
+    assert ns["plain"]("A **30% deposit** is due.\n- **Weddings:** 30 days") == "A 30% deposit is due.\n• Weddings: 30 days"
