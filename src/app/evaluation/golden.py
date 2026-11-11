@@ -77,6 +77,7 @@ class CaseResult(BaseModel):
     expected_injection: bool = False
     flag_owner: bool = False
     judge: JudgeVerdict | None = None
+    judge_error: str | None = None  # the judge call failed; this case is "not judged", the run continues
     latency_ms: float = 0.0
     cost_usd: float = 0.0
     tokens: int = 0
@@ -216,6 +217,7 @@ def compute_metrics(cases: list[CaseResult], unapproved_sends: int, retrieval: d
     m["unapproved_sends"] = unapproved_sends
     judged = [c.judge for c in cases if c.judge is not None]
     m["groundedness_rate"] = _rate(sum(j.grounded for j in judged), len(judged))
+    m["judge_errors"] = sum(1 for c in cases if c.judge_error)
     m["groundedness_mean_score"] = round(sum(j.score for j in judged) / len(judged), 2) if judged else None
     m["addresses_request_rate"] = _rate(sum(j.addresses_request for j in judged), len(judged))
     m["owner_queue_rate"] = _rate(sum(c.status == "OWNER_QUEUE" for c in cases), len(cases))
@@ -268,11 +270,15 @@ async def run_golden_eval(
                 out = await pipeline.process(inq)
                 result = score_case(case, out, store)
                 if judge and out.draft is not None:
-                    with tracing.trace(f"judge-{inq.id}", name="eval_judge"):
-                        result.judge = await judge_draft(inq, out.draft, llm)
+                    try:
+                        with tracing.trace(f"judge-{inq.id}", name="eval_judge"):
+                            result.judge = await judge_draft(inq, out.draft, llm)
+                    except Exception as exc:  # noqa: BLE001 - one failed judge call must not lose the whole run
+                        result.judge_error = f"{type(exc).__name__}: {exc}"[:200]
                 print(f"  {'ok ' if result.route_ok else 'BAD'} {case['file']:34s} {result.predicted_route:14s} "
                       f"{result.status:17s} {'total=' + str(result.actual_total) if result.actual_total else ''}"
-                      f"{' judge=' + str(result.judge.score) if result.judge else ''}", flush=True)
+                      f"{' judge=' + str(result.judge.score) if result.judge else ''}"
+                      f"{' judge=ERROR' if result.judge_error else ''}", flush=True)
                 return result
 
         results = await asyncio.gather(*(one(c) for c in cases))
