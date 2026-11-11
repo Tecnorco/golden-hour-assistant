@@ -1,7 +1,7 @@
 # Golden Hour Assistant. Targets are added phase by phase.
 PY := .venv/bin/python
 
-.PHONY: setup index run ui queue mcp-demo test test-live extract eval-retrieval
+.PHONY: setup index run ui queue mcp-demo eval compare report test test-live extract eval-retrieval
 
 setup:            ## create .venv and install dependencies (needs uv)
 	uv sync
@@ -33,3 +33,12 @@ extract:          ## run field extraction over data/emails (calls Gemini)
 
 eval-retrieval:   ## retrieval hit rate @k report -> evals/reports/
 	$(PY) -m app.cli eval-retrieval
+
+eval:             ## golden-set eval report -> evals/reports/ (calls Gemini)
+	$(PY) -m app.cli eval
+
+compare:          ## diff the two most recent eval runs
+	$(PY) -m app.cli eval --compare
+
+report:           ## operations report from the app DB
+	$(PY) -m app.cli report

@@ -235,6 +235,86 @@ def cmd_decide(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    from app.evaluation.reporting import compare, latest_reports, load_report, to_markdown
+
+    settings = get_settings()
+    reports = settings.reports_dir
+    reports.mkdir(parents=True, exist_ok=True)
+
+    if args.compare is not None:
+        paths = [Path(p) for p in args.compare] if args.compare else latest_reports(reports, 2)
+        if len(paths) != 2:
+            print("Need two eval runs to compare (run `make eval` twice, or pass two report .json paths).")
+            return 1
+        md = compare(load_report(paths[0]), load_report(paths[1]))
+        out = reports / f"compare-{paths[0].stem}-vs-{paths[1].stem}.md"
+        out.write_text(md, encoding="utf-8")
+        print(md)
+        print(f"Saved {out}")
+        return 0
+
+    from app.evaluation.golden import run_golden_eval
+    from app.llm.client import GeminiLLM
+    from app.rag import load_retriever
+
+    llm = GeminiLLM(settings)
+    retriever = load_retriever(settings, llm)
+    previous = latest_reports(reports, 1)
+    run_id = utcnow().strftime("%Y%m%d-%H%M%S")
+    print(f"Running golden eval {run_id} ...")
+    report = asyncio.run(run_golden_eval(
+        settings, llm, retriever, settings.data_dir.parent / "evals" / "golden.yaml",
+        run_id=run_id, concurrency=args.concurrency, judge=not args.no_judge, only=args.only,
+    ))
+    md = to_markdown(report)
+    (reports / f"eval-{run_id}.json").write_text(report.model_dump_json(indent=1), encoding="utf-8")
+    (reports / f"eval-{run_id}.md").write_text(md, encoding="utf-8")
+    print(md)
+    if previous and not args.only:
+        cmp = compare(load_report(previous[0]), report)
+        (reports / f"compare-{previous[0].stem}-vs-eval-{run_id}.md").write_text(cmp, encoding="utf-8")
+        print(cmp)
+    print(f"Saved {reports / f'eval-{run_id}.md'}")
+    return 0 if all(report.targets_met.values()) else 2
+
+
+def _store_at(db: str | None) -> Store:
+    if db:
+        store = Store(db)
+        tracing.set_sink(store)
+        return store
+    return _store()
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    from app.observability.report import render_trace
+
+    store = _store_at(args.db)
+    spans = store.spans_for_trace(args.inquiry_id)
+    render_trace(spans)
+    row = store.get_row(args.inquiry_id)
+    if row:
+        print(f"status: {row['status']}  note: {row['owner_note'] or '-'}")
+        for t in store.transitions(args.inquiry_id):
+            print(f"  {t['at'][:19]}  {t['from_status'] or '-':17s} -> {t['to_status']:17s} {t['reason'] or ''}")
+    return 0 if spans else 1
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from app.observability.report import ops_report
+
+    store = _store_at(args.db)
+    md = ops_report(store)
+    settings = get_settings()
+    settings.reports_dir.mkdir(parents=True, exist_ok=True)
+    out = settings.reports_dir / f"ops-{utcnow().strftime('%Y%m%d-%H%M%S')}.md"
+    out.write_text(md, encoding="utf-8")
+    print(md)
+    print(f"Saved {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli", description="Golden Hour Assistant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -251,6 +331,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="*")
     p.add_argument("-v", "--verbose", action="store_true", help="print drafts")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("eval", help="run the golden-set eval (calls Gemini) or --compare two runs")
+    p.add_argument("--compare", nargs="*", metavar="REPORT_JSON",
+                   help="diff two eval runs (default: the two most recent) instead of running")
+    p.add_argument("--no-judge", action="store_true", help="skip the LLM-as-judge groundedness step")
+    p.add_argument("--concurrency", type=int, default=4)
+    p.add_argument("--only", help="only run cases whose file name contains this text")
+    p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("trace", help="pretty-print the trace timeline of one inquiry")
+    p.add_argument("inquiry_id")
+    p.add_argument("--db", help="SQLite file (default: the app DB; eval runs print their own path)")
+    p.set_defaults(func=cmd_trace)
+
+    p = sub.add_parser("report", help="operations report: volume, routes, escalations, decisions, cost, latency")
+    p.add_argument("--db")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("queue", help="list inquiries (optionally by status)")
     p.add_argument("--status", choices=[s.value for s in InquiryStatus])
