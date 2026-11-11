@@ -49,7 +49,7 @@ Then, optionally:
 make eval                 # golden-set eval report -> evals/reports/
 make compare              # diff the last two eval runs (prompt regressions)
 make report               # operations report: volume, routes, escalations, decisions, cost
-make test                 # 230 unit tests, no API key needed
+make test                 # 256 unit tests, no API key needed
 make mcp-demo             # the MCP server driven by a plain, generic MCP client
 ```
 
@@ -117,11 +117,12 @@ Streamlit, and only then can `send_reply` write the reply to `outbox/`. Every st
 | No invented policies, prices, availability or discounts | Policy claims must cite a retrieved chunk; "promise" patterns (discounts, confirmations, refunds, unchecked dates) fail the draft; FAQ falls back to a fixed holding reply when nothing is retrieved | `tests/test_guardrails.py`, `tests/test_routing_and_orchestrator.py` |
 | Email content is data, never instructions | `<untrusted_email>` wrapping that cannot be closed from inside; injection heuristics + LLM classifier before routing; repair step never sees the email | `tests/test_guardrails.py`, eval: 2/2 blocked, 0 false blocks |
 | Personal data redacted in logs and traces | Every span field passes through `redact()` (emails, phones, cards, addresses, key-shaped strings) | `tests/test_redact.py`, `tests/test_tracing.py` |
+| Failures never reach a customer | Retries with backoff (5xx, 429, timeouts); any pipeline error, failed repair or broken tool call goes to the owner queue; a crashed MCP server is restarted once; a failed eval-judge call marks one case "not judged" instead of losing the run | `tests/test_failure_handling.py`, `tests/test_mcp.py` |
 | API key never leaked | Only the pipeline process holds it: the MCP server gets the SDK's env allowlist and never loads `.env`; the Streamlit UI drops the key; settings hold it as `SecretStr`; unit tests run with no key | `tests/test_mcp.py`, `tests/test_ui.py`, `tests/test_llm_wrapper.py` |
 
 ## Owner approval screen
 
-`make ui` opens a light, minimal review screen (Geist font and Lucide icons, both bundled, so the page makes no
+`make ui` opens a sign-in page, then a light, minimal review screen (Geist font and Lucide icons, both bundled, so the page makes no
 outside requests; Streamlit usage statistics are turned off in `.streamlit/config.toml`).
 
 - **Inbox:** filter chips (Needs review, Pending approval, Owner queue, Blocked, In progress, Sent, Rejected, All),
@@ -132,7 +133,15 @@ outside requests; Streamlit usage statistics are turned off in `.streamlit/confi
 - **Buttons:** **Approve & send**, **Edit, approve & send**, **Reject**, **Review blocked item**, and **Move to owner
   queue** for items whose processing was interrupted.
 
-Customer text is always HTML-escaped before display (some emails are prompt-injection attempts). Approved replies are
+Customer text is always HTML-escaped before display (some emails are prompt-injection attempts).
+
+**Sign-in:** one shared demo account (username `admin`; the password is shared separately and stored in the code
+only as a salted PBKDF2 hash). Set `GHA_UI_USERNAME` / `GHA_UI_PASSWORD` as environment variables or Streamlit
+secrets to use your own; the default password then stops working. Five wrong attempts lock the session for a
+minute. This is a demo gate, not multi-user authentication.
+
+**Hosted demo:** the screen can run on Streamlit Community Cloud with a committed snapshot of the 20 processed
+sample emails and **no API key** — see [docs/deployment.md](docs/deployment.md#showcase-on-streamlit-community-cloud-step-by-step). Approved replies are
 written to `outbox/<inquiry_id>.eml` as threaded replies with citation markers removed; every decision is
 logged with a timestamp. The UI never calls the model and never holds the API key.
 
@@ -146,7 +155,8 @@ CLI fallback: `python -m app.cli queue` and `python -m app.cli decide <id> appro
 | `make doctor` | `doctor [--offline] [--quick]` | Check every moving part, with fixes |
 | `make index` | `index` | Build the vector index (cached embeddings) |
 | `make run` | `run [paths]` `[-v]` | Process `.eml` files through the full pipeline |
-| `make ui` | | Streamlit approval screen |
+| `make ui` | | Streamlit approval screen (sign-in required) |
+| `make demo-snapshot` | `demo-snapshot` | Process the sample emails into `demo/assistant.db` for the hosted demo |
 | `make queue` | `queue [--status S]`, `decide <id> approve\|reject` | CLI approval loop |
 | `make eval` | `eval [--no-judge] [--only TEXT]` | Golden-set eval report |
 | `make compare` | `eval --compare [A.json B.json]` | Diff two eval runs |
@@ -213,27 +223,28 @@ src/app/
   store.py · models.py · config.py · cli.py · doctor.py
 ui/streamlit_app.py
 evals/           golden.yaml, retrieval_pairs.yaml, reports/
-tests/           230 unit tests (+6 live)
+tests/           256 unit tests (+6 live)
 docs/            architecture, demo script, pitch, eval results, deployment
 ```
 
 ## Testing
 
-- `make test`: 230 tests, no API key (the test fixture removes it). The LLM is replaced by a scripted
+- `make test`: 256 tests, no API key (the test fixture removes it). The LLM is replaced by a scripted
   `FakeLLM`; the MCP tests start the real server process; the UI tests drive Streamlit with `AppTest`.
 - `make test-live`: 6 tests against the real Gemini API (extraction, retrieval, routing).
 - `make eval`: the end-to-end quality gate (exits non-zero if a target is missed).
 
 ## Deployment
 
-Not part of this capstone (no authentication yet, see the brief's non-goals). See
-[docs/deployment.md](docs/deployment.md) for a safe private-demo setup and a pre-deployment checklist.
+Not part of the capstone brief, but a hosted showcase is supported: Streamlit Community Cloud, a demo login,
+the pre-processed sample emails, and no API key on the server. Step-by-step instructions, troubleshooting and a
+pre-deployment checklist are in [docs/deployment.md](docs/deployment.md).
 
 ## Limitations and next steps
 
 - Only `.eml` input today; `Adapter` is ready for Gmail (in-thread replies) and WhatsApp (24-hour reply window,
   per-number memory) — see [docs/architecture.md](docs/architecture.md#adding-a-channel-gmail-whatsapp).
-- No authentication or multi-tenant accounts: the approval screen must not be exposed publicly with real data.
+- One shared demo login, no multi-user accounts: do not expose the screen with real customer data.
 - Cost figures are estimates; the Gemini 3.8 Flash prices in `config.py` are placeholders to verify.
 - The golden set has 20 emails; a real pilot should grow it from the owner's actual inbox (with consent).
 
