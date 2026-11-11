@@ -20,6 +20,7 @@ def _isolated(tmp_path, monkeypatch, request):
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("GHA_VAR_DIR", str(tmp_path / "var"))
     monkeypatch.setenv("GHA_OUTBOX_DIR", str(tmp_path / "outbox"))
+    monkeypatch.setenv("GHA_REPORTS_DIR", str(tmp_path / "reports"))
     get_settings.cache_clear()
     sink = tracing.MemorySink()
     tracing.set_sink(sink)
