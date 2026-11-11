@@ -122,8 +122,31 @@ def cmd_eval_retrieval(args: argparse.Namespace) -> int:
     return 0
 
 
-async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> list:
-    """Run the full pipeline over .eml files. Business tools are reached over MCP."""
+async def build_pipeline_and_run(paths: list[Path], verbose: bool = False, force: bool = False,
+                                 min_age_seconds: float = 0.0) -> list:
+    """Run the full pipeline over the .eml files that have not been processed yet.
+
+    Already-processed emails (same Message-ID or same file) are skipped, so
+    re-running costs nothing. Business tools are reached over MCP. Gemini and the
+    MCP server are only started when there is at least one new email.
+    """
+    from app.intake import backfill_source_keys, select_new
+
+    settings = get_settings()
+    store = _store()
+    adapter = EmlAdapter()
+    backfill_source_keys(store, adapter)
+    sel = select_new(paths, store, adapter, force=force, min_age_seconds=min_age_seconds)
+    for path, reason in sel.skipped:
+        print(f"{path.name:34s} skipped: {reason}")
+    for path, reason in sel.unreadable:
+        print(f"{path.name:34s} could not read: {reason}")
+    for path in sel.waiting:
+        print(f"{path.name:34s} still being written; will pick it up next time")
+    if not sel.new:
+        print("No new emails to process." if paths else "No .eml files found.")
+        return []
+
     from app.agents.base import AgentDeps, load_brand_voice
     from app.guardrails.input import make_input_guard
     from app.guardrails.output import output_guard
@@ -133,12 +156,10 @@ async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> li
     from app.orchestrator import Pipeline
     from app.rag import load_retriever
 
-    settings = get_settings()
-    store = _store()
     llm = GeminiLLM(settings)
     retriever = load_retriever(settings, llm)
-    adapter = EmlAdapter()
     outcomes = []
+    print(f"Processing {len(sel.new)} new email(s)...")
     async with MCPToolbox(server_params(settings.data_dir, settings.db_path)) as toolbox:
         deps = AgentDeps(llm=llm, toolbox=toolbox, retriever=retriever,
                          brand_voice=load_brand_voice(settings.data_dir), max_steps=settings.agent_max_steps)
@@ -148,8 +169,8 @@ async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> li
             output_guard=output_guard,
             repair=make_repairer(deps),
         )
-        for path in paths:
-            out = await pipeline.process(adapter.parse(path))
+        for path, inq in sel.new:
+            out = await pipeline.process(inq)
             outcomes.append((path, out))
             label = f"{out.route.label}({out.route.confidence:.2f})" if out.route else "-"
             flags = ("needs_info " if out.needs_info else "") + ("flag_owner" if out.flag_owner else "")
@@ -168,11 +189,14 @@ def cmd_demo_snapshot(args: argparse.Namespace) -> int:
 
     target = Path(args.output).resolve()
     work = Path(tempfile.mkdtemp(prefix="gha-snapshot-"))
-    os.environ["GHA_DB_PATH"] = str(work / "assistant.db")
+    db = work / "assistant.db"
+    if target.exists() and not args.fresh:
+        # Start from the current snapshot: only emails that are not in it yet are processed (and paid for).
+        db.write_bytes(target.read_bytes())
+    os.environ["GHA_DB_PATH"] = str(db)
     os.environ["GHA_OUTBOX_DIR"] = str(work / "outbox")
     get_settings.cache_clear()
     asyncio.run(build_pipeline_and_run(_emails([])))
-    db = work / "assistant.db"
     with sqlite3.connect(db) as conn:
         conn.execute("VACUUM")
     # Defence in depth: the snapshot is committed, so it must never contain a key.
@@ -186,8 +210,37 @@ def cmd_demo_snapshot(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose))
+    asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose, force=args.force))
     return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Check a folder for new .eml files every few minutes and process them.
+
+    Already-processed emails are skipped, so each email is paid for once. Files
+    changed in the last few seconds are left for the next check (they may still
+    be copying). An error in one check is reported and the next check still runs.
+    """
+    import time
+
+    folder = Path(args.folder) if args.folder else get_settings().data_dir / "emails"
+    print(f"Watching {folder} every {args.interval}s for new .eml files. Press Ctrl+C to stop.")
+    try:
+        while True:
+            stamp = time.strftime("%H:%M:%S")
+            print(f"[{stamp}] checking...")
+            try:
+                done = asyncio.run(build_pipeline_and_run(_emails([str(folder)]), min_age_seconds=args.settle))
+                if done:
+                    print(f"[{time.strftime('%H:%M:%S')}] processed {len(done)} new email(s); refresh the review screen.")
+            except Exception as exc:  # noqa: BLE001 - keep watching; the next check retries
+                print(f"[{time.strftime('%H:%M:%S')}] check failed: {type(exc).__name__}: {exc}")
+            if args.once:
+                return 0
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("Stopped watching.")
+        return 0
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
@@ -322,10 +375,19 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", help="process .eml files through the full pipeline (calls Gemini, tools via MCP)")
     p.add_argument("paths", nargs="*")
     p.add_argument("-v", "--verbose", action="store_true", help="print drafts")
+    p.add_argument("--force", action="store_true", help="process again even if already processed (costs tokens)")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("watch", help="check a folder for new .eml files every 5 minutes and process them")
+    p.add_argument("--folder", help="folder to watch (default: data/emails)")
+    p.add_argument("--interval", type=int, default=300, help="seconds between checks (default: 300 = 5 minutes)")
+    p.add_argument("--settle", type=float, default=5.0, help="ignore files changed in the last N seconds")
+    p.add_argument("--once", action="store_true", help="check once and exit")
+    p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("demo-snapshot", help="process the sample emails into demo/assistant.db for a hosted demo")
     p.add_argument("--output", default=str(Path(__file__).resolve().parents[2] / "demo" / "assistant.db"))
+    p.add_argument("--fresh", action="store_true", help="reprocess every email instead of reusing the current snapshot")
     p.set_defaults(func=cmd_demo_snapshot)
 
     p = sub.add_parser("eval", help="run the golden-set eval (calls Gemini) or --compare two runs")
