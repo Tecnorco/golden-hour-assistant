@@ -24,7 +24,8 @@ from app.agents.quote_agent import run_quote_agent
 from app.agents.router import needs_owner, route
 from app.agents.support_agents import run_faq_agent, run_other_agent
 from app.config import Settings
-from app.models import Draft, ExtractedFields, GuardrailVerdict, Inquiry, InquiryStatus, RouteDecision
+from app.adapters.base import Adapter
+from app.models import Decision, Draft, ExtractedFields, GuardrailVerdict, Inquiry, InquiryStatus, OutgoingReply, RouteDecision
 from app.observability.tracing import span, trace
 from app.store import Store
 
@@ -216,3 +217,62 @@ class Pipeline:
 
     def _save_verdicts(self, inquiry_id: str, verdicts: list[GuardrailVerdict]) -> None:
         self.store.set_field(inquiry_id, "verdicts", [v.model_dump() for v in verdicts])
+
+
+# ---------------------------------------------------------------- human in the loop + send gate
+
+
+class SendBlocked(RuntimeError):
+    """Raised whenever something tries to send a reply without recorded approval."""
+
+
+SENDABLE = {S.APPROVED, S.EDITED_APPROVED}
+ACTION_TO_STATUS = {"approve": S.APPROVED, "edit_approve": S.EDITED_APPROVED, "reject": S.REJECTED}
+
+
+def record_decision(store: Store, decision: Decision) -> None:
+    """Owner decision: logged with timestamp, then a state transition. Edited text
+    is stored as a new draft version so the sent text is always on record."""
+    status = InquiryStatus(store.get_status(decision.inquiry_id) or "RECEIVED")
+    target = ACTION_TO_STATUS[decision.action]
+    if target not in TRANSITIONS[status]:
+        raise InvalidTransition(f"cannot {decision.action} an inquiry in status {status.value}")
+    if decision.action == "edit_approve":
+        if not (decision.edited_body or "").strip():
+            raise ValueError("edit_approve needs the edited text")
+        base = store.latest_draft(decision.inquiry_id)
+        inq = store.get_inquiry(decision.inquiry_id)
+        store.add_draft(Draft(
+            inquiry_id=decision.inquiry_id,
+            subject=base.subject if base else f"Re: {inq.subject if inq else ''}",
+            body=decision.edited_body or "", sources=base.sources if base else [],
+            tool_results=base.tool_results if base else [], agent="owner",
+        ))
+    with trace(decision.inquiry_id, name="owner_decision", input={"action": decision.action}):
+        store.add_decision_json(decision.inquiry_id, decision.decided_at.isoformat(), decision.model_dump_json())
+        transition(store, decision.inquiry_id, target, f"owner: {decision.action}{' - ' + decision.note if decision.note else ''}")
+
+
+def send_reply(store: Store, adapter: Adapter, inquiry_id: str) -> str:
+    """The ONLY way a reply leaves the system. Raises SendBlocked unless the
+    stored status is APPROVED or EDITED_APPROVED and a matching owner decision is
+    on record. Citation markers are stripped from the customer's copy."""
+    from app.guardrails.output import strip_citations  # local import: guardrails import this module
+
+    status = store.get_status(inquiry_id)
+    if status is None or InquiryStatus(status) not in SENDABLE:
+        raise SendBlocked(f"refusing to send {inquiry_id}: status is {status}, not APPROVED/EDITED_APPROVED")
+    decisions = [Decision.model_validate_json(d["data"]) for d in store.decisions(inquiry_id)]
+    if not decisions or decisions[-1].action not in ("approve", "edit_approve"):
+        raise SendBlocked(f"refusing to send {inquiry_id}: no recorded owner approval")
+    draft = store.latest_draft(inquiry_id)
+    inq = store.get_inquiry(inquiry_id)
+    if draft is None or inq is None or not draft.body.strip():
+        raise SendBlocked(f"refusing to send {inquiry_id}: no draft on record")
+    reply = OutgoingReply(inquiry_id=inquiry_id, thread_id=inq.thread_id, to=inq.sender,
+                          subject=draft.subject, body=strip_citations(draft.body))
+    with trace(inquiry_id, name="send", input={"channel": inq.channel}) as s:
+        ref = adapter.send_reply(reply)
+        transition(store, inquiry_id, S.SENT, f"sent via {inq.channel}")
+        s.output = "sent"
+    return ref

@@ -82,7 +82,10 @@ def _prices() -> dict[str, ModelPrice]:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    load_dotenv(ROOT / ".env")
+    # The approval UI sets GHA_SKIP_DOTENV=1: it never calls the model, so it
+    # never needs (or holds) the API key.
+    if os.environ.get("GHA_SKIP_DOTENV") != "1":
+        load_dotenv(ROOT / ".env")
     key = os.environ.get("GEMINI_API_KEY") or None
     var = Path(_env("GHA_VAR_DIR", str(ROOT / "var")))
     return Settings(
