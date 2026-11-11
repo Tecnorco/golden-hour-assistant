@@ -1,0 +1,25 @@
+{
+  "_comment": "Maya's booking calendar (demo data). One shoot per day. 'blocked' = studio closed.",
+  "timezone": "America/Chicago",
+  "booked": [
+    {"date": "2026-11-14", "what": "Henderson family portraits"},
+    {"date": "2026-11-21", "what": "Okafor wedding (full day)"},
+    {"date": "2026-11-28", "what": "Riverbend Rotary gala"},
+    {"date": "2026-12-05", "what": "Lindqvist mini session"},
+    {"date": "2026-12-13", "what": "Holiday minis - studio"},
+    {"date": "2026-12-19", "what": "Patel engagement session"},
+    {"date": "2027-01-09", "what": "Chen corporate headshots"},
+    {"date": "2027-02-14", "what": "Valentine's couples minis (sold out)"},
+    {"date": "2027-03-20", "what": "Moreno quinceañera"},
+    {"date": "2027-04-17", "what": "Abernathy wedding (half day)"},
+    {"date": "2027-05-01", "what": "Garcia-Novak wedding"},
+    {"date": "2027-05-22", "what": "Stonebridge HS prom"},
+    {"date": "2027-06-05", "what": "Whitfield wedding"},
+    {"date": "2027-06-19", "what": "Tran wedding (full day)"}
+  ],
+  "blocked": [
+    {"start": "2026-11-26", "end": "2026-11-27", "why": "Thanksgiving"},
+    {"start": "2026-12-24", "end": "2027-01-01", "why": "Studio closed for the holidays"},
+    {"start": "2027-03-01", "end": "2027-03-04", "why": "Maya at a workshop in Denver"}
+  ]
+}

@@ -1,0 +1,66 @@
+# Golden Hour Photography - price list (fictional demo data).
+# This file is the ONLY source of prices. The pricing engine reads it; the LLM never does arithmetic.
+# Last updated by Maya, Oct 2026. (Album price went up from $275 - remember to update the website!)
+
+currency: USD
+studio_town: Willowbrook
+
+packages:
+  mini_portrait:
+    name: Mini Portrait Session
+    includes: 45 minutes, 10 edited photos
+    price: 175
+  standard_portrait:
+    name: Standard Portrait Session
+    includes: 90 minutes, 30 edited photos
+    price: 350
+  event:
+    name: Event Coverage
+    includes: hourly coverage, 2-hour minimum
+    hourly_rate: 225
+    min_hours: 2
+  wedding_half_day:
+    name: Wedding Half-Day
+    includes: 5 hours coverage
+    price: 1800
+  wedding_full_day:
+    name: Wedding Full-Day
+    includes: 8 hours coverage
+    price: 2900
+
+add_ons:
+  second_photographer:
+    name: Second photographer
+    price: 400
+    allowed_for: [event, wedding_half_day, wedding_full_day]
+  extra_photos:
+    name: Extra 10 edited photos
+    price: 120          # per set of 10
+  rush_delivery:
+    name: Rush delivery (within 5 days)
+    price: 150
+  printed_album:
+    name: Printed album
+    price: 300
+  engagement_session:
+    name: Engagement session
+    price: 250
+
+rules:
+  weekend_surcharge_pct: 10      # Sat/Sun, on the package price only
+  free_travel_miles: 25
+  travel_rate_per_mile: 1.50     # per mile beyond the free radius
+  deposit_pct: 30                # of the grand total, due to book
+
+# Driving miles from the studio in Willowbrook. Anything not listed = ask the customer.
+towns:
+  Willowbrook: 0
+  Maple Hollow: 8
+  Riverbend: 15
+  Cedar Ridge: 22
+  Ashford: 25
+  Pine Harbor: 32
+  Stonebridge: 40
+  Lakeview Springs: 48
+  Fox Run: 55
+  Copper Valley: 70
