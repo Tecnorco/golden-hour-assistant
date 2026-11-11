@@ -1,7 +1,7 @@
 # Golden Hour Assistant. Targets are added phase by phase.
 PY := .venv/bin/python
 
-.PHONY: setup doctor index run ui queue mcp-demo eval compare report test test-live extract eval-retrieval
+.PHONY: setup doctor index run demo-snapshot ui queue mcp-demo eval compare report test test-live extract eval-retrieval
 
 setup:            ## create .venv and install dependencies (needs uv)
 	uv sync
@@ -15,6 +15,9 @@ index:            ## chunk + embed policy docs into var/index (calls Gemini, cac
 
 run:              ## process data/emails through the full pipeline (calls Gemini)
 	$(PY) -m app.cli run
+
+demo-snapshot:    ## process the sample emails into demo/assistant.db (for the hosted demo)
+	$(PY) -m app.cli demo-snapshot
 
 ui:               ## owner approval screen (Streamlit; never holds the API key)
 	.venv/bin/streamlit run ui/streamlit_app.py

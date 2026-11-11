@@ -159,6 +159,32 @@ async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> li
     return outcomes
 
 
+def cmd_demo_snapshot(args: argparse.Namespace) -> int:
+    """Process the sample emails into demo/assistant.db for a hosted showcase."""
+    import os
+    import re
+    import sqlite3
+    import tempfile
+
+    target = Path(args.output).resolve()
+    work = Path(tempfile.mkdtemp(prefix="gha-snapshot-"))
+    os.environ["GHA_DB_PATH"] = str(work / "assistant.db")
+    os.environ["GHA_OUTBOX_DIR"] = str(work / "outbox")
+    get_settings.cache_clear()
+    asyncio.run(build_pipeline_and_run(_emails([])))
+    db = work / "assistant.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("VACUUM")
+    # Defence in depth: the snapshot is committed, so it must never contain a key.
+    if re.search(rb"AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z_-]{20,}", db.read_bytes()):
+        print("Refusing to write the snapshot: it contains something that looks like an API key.")
+        return 1
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(db.read_bytes())
+    print(f"Wrote {target} ({target.stat().st_size // 1024} KB). Commit it to update the hosted demo.")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose))
     return 0
@@ -297,6 +323,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="*")
     p.add_argument("-v", "--verbose", action="store_true", help="print drafts")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("demo-snapshot", help="process the sample emails into demo/assistant.db for a hosted demo")
+    p.add_argument("--output", default=str(Path(__file__).resolve().parents[2] / "demo" / "assistant.db"))
+    p.set_defaults(func=cmd_demo_snapshot)
 
     p = sub.add_parser("eval", help="run the golden-set eval (calls Gemini) or --compare two runs")
     p.add_argument("--compare", nargs="*", metavar="REPORT_JSON",
