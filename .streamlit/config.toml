@@ -14,8 +14,8 @@ enableStaticServing = true
 
 [theme]
 base = "light"
-primaryColor = "#18181B"
-backgroundColor = "#FAF8F5"
-secondaryBackgroundColor = "#F4F2EE"
-textColor = "#18181B"
+primaryColor = "#FF7A1A"
+backgroundColor = "#FFF9F0"
+secondaryBackgroundColor = "#FFF1DC"
+textColor = "#14213D"
 font = "Geist, ui-sans-serif, system-ui, sans-serif"

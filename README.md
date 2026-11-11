@@ -39,8 +39,9 @@ make setup                # creates .venv, installs dependencies, creates .env f
 # edit .env and set GEMINI_API_KEY
 make doctor               # checks config, data, index, MCP server, Gemini access, one end-to-end run
 make index                # chunks + embeds the policy documents (cached)
-make run                  # processes the 20 sample emails in data/emails/
+make run                  # processes new emails in data/emails/ (already-processed ones are skipped)
 make ui                   # opens the owner approval screen at http://localhost:8501
+make watch                # optional: check data/emails every 5 minutes and process new emails
 ```
 
 Then, optionally:
@@ -65,6 +66,7 @@ Windows does not include `make`. Every target is one command; run them from the 
 | `make doctor` | `uv run python -m app.cli doctor` |
 | `make index` | `uv run python -m app.cli index` |
 | `make run` | `uv run python -m app.cli run` |
+| `make watch` | `uv run python -m app.cli watch` |
 | `make ui` | `uv run streamlit run ui\streamlit_app.py` |
 | `make test` | `uv run pytest -q` |
 | `make eval` | `uv run python -m app.cli eval` |
@@ -96,6 +98,14 @@ the owner. A specialist agent drafts a reply using MCP tools and retrieved polic
 checks verify the draft (one automatic repair attempt if they fail). The owner approves, edits or rejects in
 Streamlit, and only then can `send_reply` write the reply to `outbox/`. Every step is a traced span in SQLite.
 
+## Adding new emails
+
+Drop `.eml` files into `data/emails/` and run `make run` (Windows: `uv run python -m app.cli run`), or leave
+`make watch` running to pick them up every 5 minutes. Each email is identified by its `Message-ID` header (or a hash
+of the file when it has none), so emails that were already processed are skipped and never cost tokens twice;
+`--force` reprocesses on purpose (for example after changing a prompt). Files still being copied are left for the
+next check. Refresh the review screen to see new inquiries.
+
 ## The seven skill areas
 
 | Skill area | Where it is demonstrated | How to see it |
@@ -122,8 +132,10 @@ Streamlit, and only then can `send_reply` write the reply to `outbox/`. Every st
 
 ## Owner approval screen
 
-`make ui` opens a sign-in page, then a light, minimal review screen (Geist font and Lucide icons, both bundled, so the page makes no
-outside requests; Streamlit usage statistics are turned off in `.streamlit/config.toml`).
+`make ui` opens a sign-in page, then a bright, modern review screen in the Golden Hour Photography palette (golden
+yellow, sunset orange, coral, deep navy on warm white) with the studio logo and favicon. Geist font, Lucide icons and
+the logo are bundled, so the page makes no outside requests; Streamlit usage statistics are turned off in
+`.streamlit/config.toml`.
 
 - **Inbox:** filter chips (Needs review, Pending approval, Owner queue, Blocked, In progress, Sent, Rejected, All),
   one row per inquiry with a status chip, the reason it needs attention, its type and an **Open** button.
@@ -154,9 +166,10 @@ CLI fallback: `python -m app.cli queue` and `python -m app.cli decide <id> appro
 | `make setup` | | Create `.venv`, install dependencies, create `.env` |
 | `make doctor` | `doctor [--offline] [--quick]` | Check every moving part, with fixes |
 | `make index` | `index` | Build the vector index (cached embeddings) |
-| `make run` | `run [paths]` `[-v]` | Process `.eml` files through the full pipeline |
+| `make run` | `run [paths] [-v] [--force]` | Process new `.eml` files; already-processed emails are skipped (`--force` reprocesses) |
+| `make watch` | `watch [--interval 300] [--folder F] [--once]` | Check a folder every 5 minutes and process new emails |
 | `make ui` | | Streamlit approval screen (sign-in required) |
-| `make demo-snapshot` | `demo-snapshot` | Process the sample emails into `demo/assistant.db` for the hosted demo |
+| `make demo-snapshot` | `demo-snapshot [--fresh]` | Update `demo/assistant.db` for the hosted demo (only new emails are processed) |
 | `make queue` | `queue [--status S]`, `decide <id> approve\|reject` | CLI approval loop |
 | `make eval` | `eval [--no-judge] [--only TEXT]` | Golden-set eval report |
 | `make compare` | `eval --compare [A.json B.json]` | Diff two eval runs |

@@ -19,6 +19,7 @@ os.environ["GHA_SKIP_DOTENV"] = "1"
 os.environ.pop("GEMINI_API_KEY", None)
 
 import json  # noqa: E402
+import re  # noqa: E402
 from datetime import datetime  # noqa: E402
 from typing import Any  # noqa: E402
 
@@ -48,7 +49,10 @@ PACKAGE_NAMES = {
 FIELD_LABELS = [("service_type", "Package"), ("event_date", "Date"), ("location", "Location"), ("hours", "Hours"),
                 ("add_ons", "Add-ons"), ("extra_photo_sets", "Extra photo sets"), ("people_count", "People")]
 
-st.set_page_config(page_title="Golden Hour · Inbox", layout="wide", initial_sidebar_state="expanded")
+STATIC = ROOT / "ui" / "static"
+LOGO = '<img class="gh-logo" src="app/static/logo.png" alt="Golden Hour Photography">'
+st.set_page_config(page_title="Golden Hour · Inbox", page_icon=str(STATIC / "favicon.png"), layout="wide",
+                   initial_sidebar_state="expanded")
 
 
 @st.cache_resource
@@ -110,8 +114,8 @@ st.html(
     + button_icon_css(".st-key-reject", "x") + button_icon_css(".st-key-unblock", "undo-2")
     + button_icon_css(".st-key-to_owner", "user-round")
     + button_icon_css(".st-key-nav_logout", "log-out") + button_icon_css(".st-key-nav_reset", "rotate-ccw")
-    + f".st-key-nav_{page} button{{background:#FFFFFF !important;color:#18181B !important;"
-    "box-shadow:0 1px 2px rgba(24,24,27,.06),0 0 0 1px #ECE8E1}"
+    + f"div.st-key-nav_{page} .stButton button[kind]{{background:#FFF3C4 !important;color:#14213D !important;"
+    "box-shadow:inset 3px 0 0 #F5B301;font-weight:600}"
     + "</style>"
 )
 
@@ -122,8 +126,8 @@ def render_login() -> None:
     st.html("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl']{display:none}"
             ".block-container{max-width:440px;padding-top:12vh}</style>")
     with st.container(key="card_login"):
-        st.html(f'<div class="gh-brand">Golden Hour</div><div class="gh-brand-sub">Reply assistant</div>'
-                f'<div class="gh-title" style="font-size:24px;margin-top:18px">Sign in</div>'
+        st.html(f'{LOGO}<div class="gh-logo-sub">Reply assistant</div>'
+                f'<div class="gh-title" style="font-size:24px;margin-top:6px">Sign in</div>'
                 f'<div class="gh-subtitle" style="margin-bottom:6px">Review and approve customer replies.</div>')
         with st.form("login", border=False):
             username = st.text_input("Username", key="login_user", autocomplete="username")
@@ -160,7 +164,7 @@ def when(iso: str) -> str:
 # ---------------------------------------------------------------- sidebar
 
 with st.sidebar:
-    st.html('<div class="gh-brand">Golden Hour</div><div class="gh-brand-sub">Reply assistant</div>')
+    st.html(f'{LOGO}<div class="gh-logo-sub">Reply assistant</div>')
     st.button("Inbox", key="nav_inbox", on_click=go, args=("inbox",), use_container_width=True)
     st.button("Inquiry", key="nav_detail", on_click=go, args=("detail",), use_container_width=True,
               disabled=not rows)
@@ -230,6 +234,12 @@ def render_inbox() -> None:
 
 
 # ---------------------------------------------------------------- detail page
+
+
+def plain(markdown: str) -> str:
+    """Policy excerpts are Markdown; show them as plain text (no ** or list dashes)."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", markdown)
+    return re.sub(r"(^|\n)\s*[-*]\s+", r"\1• ", text)
 
 
 def kv(pairs: list[tuple[str, str]]) -> str:
@@ -446,7 +456,7 @@ def render_detail() -> None:
                 src_rows.append(f'<div class="gh-row">{icon("book-open", 15, MUTED)}<div class="gh-row-main">'
                                 f'<div class="gh-row-title">{esc(c.get("heading", ""))} {tag}</div>'
                                 f'<div class="gh-row-sub gh-mono">{esc(cid)}</div>'
-                                f'<div class="gh-row-sub">{esc(c.get("text", "")[:420])}</div></div></div>')
+                                f'<div class="gh-row-sub">{esc(plain(c.get("text", ""))[:420])}</div></div></div>')
             if src_rows:
                 st.html("".join(src_rows))
         with t_tools:

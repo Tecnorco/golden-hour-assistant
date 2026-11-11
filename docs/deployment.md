@@ -67,10 +67,16 @@ needs **no Gemini API key**: it can only review, approve, edit and reject, never
 ### 6. Updating the demo later
 
 - Every push to `main` redeploys the app automatically.
-- To refresh the demo data after changing prompts or the price list, run this on your computer (it calls Gemini,
-  about 10 minutes) and commit the new `demo/assistant.db`:
+- To add new emails to the demo: put the `.eml` files in `data/emails/`, run this on your computer, and commit the
+  updated `demo/assistant.db` (plus the new emails). It starts from the current snapshot and only processes (and
+  pays for) emails that are not in it yet:
   - Mac/Linux: `make demo-snapshot`
   - Windows: `uv run python -m app.cli demo-snapshot`
+
+  Add `--fresh` to reprocess everything, for example after changing prompts or the price list (about 30 seconds and
+  roughly $0.009 per email).
+- After the push, click **Reset demo data** in the app's sidebar: the hosted app never overwrites data it already
+  has, so the reset is what loads the new snapshot.
 
 ### If something goes wrong
 
