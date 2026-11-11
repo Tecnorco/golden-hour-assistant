@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import email
 import email.policy
+import hashlib
 import re
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -94,6 +95,7 @@ class EmlAdapter(Adapter):
         thread_id = refs[0] if refs else (msg.get("In-Reply-To") or msg.get("Message-ID") or new_id("thread"))
 
         return Inquiry(
+            source_key=source_key(msg, data),
             channel="email",
             thread_id=str(thread_id).strip(),
             sender=str(msg.get("From", "")),
@@ -120,6 +122,13 @@ class EmlAdapter(Adapter):
         path = self.outbox_dir / f"{reply.inquiry_id}.eml"
         path.write_bytes(bytes(msg))
         return str(path)
+
+
+def source_key(msg: EmailMessage, raw: bytes) -> str:
+    """Stable identity of an email: its Message-ID (unique per sent email), or a
+    hash of the raw file when the header is missing."""
+    mid = (msg.get("Message-ID") or "").strip()
+    return f"msgid:{mid.lower()}" if mid else f"sha256:{hashlib.sha256(raw).hexdigest()}"
 
 
 def first_name(sender: str) -> str | None:

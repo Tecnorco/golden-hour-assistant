@@ -41,6 +41,9 @@ class Inquiry(BaseModel):
     # WhatsApp only allows free-form replies for 24h after the customer's last message.
     reply_window_expires_at: datetime | None = None
     source_path: str | None = None  # e.g. the .eml file this came from
+    # Identifies the original message so it is never processed twice:
+    # "msgid:<message-id>" when the email has a Message-ID header, else "sha256:<file hash>".
+    source_key: str | None = None
 
 
 class OutgoingReply(BaseModel):

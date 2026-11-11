@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS inquiries (
     extracted TEXT,              -- ExtractedFields json
     verdicts TEXT,               -- list[GuardrailVerdict] json
     owner_note TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    source_key TEXT              -- see Inquiry.source_key; used to skip already-processed emails
 );
 CREATE TABLE IF NOT EXISTS drafts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +63,8 @@ CREATE TABLE IF NOT EXISTS spans (
 CREATE INDEX IF NOT EXISTS spans_trace ON spans(trace_id);
 CREATE INDEX IF NOT EXISTS drafts_inq ON drafts(inquiry_id);
 """
+# Indexes on columns that older databases gain through _migrate().
+POST_MIGRATION = "CREATE INDEX IF NOT EXISTS inquiries_source_key ON inquiries(source_key);"
 
 
 class Store:
@@ -75,6 +78,15 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+            self._conn.executescript(POST_MIGRATION)
+
+    def _migrate(self) -> None:
+        """Bring databases created by older versions up to date (adds columns only)."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(inquiries)")}
+        if "source_key" not in cols:
+            self._conn.execute("ALTER TABLE inquiries ADD COLUMN source_key TEXT")
+            self._conn.commit()
 
     def _exec(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -91,13 +103,27 @@ class Store:
     def add_inquiry(self, inq: Inquiry, status: str = "RECEIVED") -> None:
         now = utcnow().isoformat()
         self._exec(
-            "INSERT OR REPLACE INTO inquiries (id, status, received_at, data, updated_at) VALUES (?,?,?,?,?)",
-            (inq.id, status, inq.received_at.isoformat(), inq.model_dump_json(), now),
+            "INSERT OR REPLACE INTO inquiries (id, status, received_at, data, updated_at, source_key) VALUES (?,?,?,?,?,?)",
+            (inq.id, status, inq.received_at.isoformat(), inq.model_dump_json(), now, inq.source_key),
         )
         self._exec(
             "INSERT INTO transitions (inquiry_id, from_status, to_status, at, reason) VALUES (?,?,?,?,?)",
             (inq.id, None, status, now, "received"),
         )
+
+    def find_by_source_key(self, key: str | None) -> str | None:
+        """Id of the inquiry already created from this email, if any."""
+        if not key:
+            return None
+        rows = self._query("SELECT id FROM inquiries WHERE source_key=? LIMIT 1", (key,))
+        return rows[0]["id"] if rows else None
+
+    def rows_missing_source_key(self) -> list[tuple[str, Inquiry]]:
+        rows = self._query("SELECT id, data FROM inquiries WHERE source_key IS NULL")
+        return [(r["id"], Inquiry.model_validate_json(r["data"])) for r in rows]
+
+    def set_source_key(self, inquiry_id: str, key: str) -> None:
+        self._exec("UPDATE inquiries SET source_key=? WHERE id=?", (key, inquiry_id))
 
     def get_inquiry(self, inquiry_id: str) -> Inquiry | None:
         rows = self._query("SELECT data FROM inquiries WHERE id=?", (inquiry_id,))
