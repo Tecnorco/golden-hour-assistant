@@ -1,0 +1,21 @@
+# Streamlit settings for the owner approval screen (read when you start it from the project folder).
+
+[browser]
+# The screen shows customer emails: send no usage statistics anywhere.
+gatherUsageStats = false
+
+[client]
+# Hide the "Deploy" button and developer menu.
+toolbarMode = "minimal"
+
+[server]
+# Serves ui/static/ (the bundled Geist font) so the page makes no outside requests.
+enableStaticServing = true
+
+[theme]
+base = "light"
+primaryColor = "#18181B"
+backgroundColor = "#FAF8F5"
+secondaryBackgroundColor = "#F4F2EE"
+textColor = "#18181B"
+font = "Geist, ui-sans-serif, system-ui, sans-serif"
