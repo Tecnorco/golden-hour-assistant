@@ -55,6 +55,20 @@ make mcp-demo             # the MCP server driven by a plain, generic MCP client
 
 If something does not work, run `make doctor` first: it checks each piece in order and prints the fix.
 
+### Windows (no `make`)
+
+Windows does not include `make`. Every target is one command; run them from the project folder with `uv run`:
+
+| Instead of | Run |
+|---|---|
+| `make setup` | `uv sync` then `copy .env.example .env` (and add your key) |
+| `make doctor` | `uv run python -m app.cli doctor` |
+| `make index` | `uv run python -m app.cli index` |
+| `make run` | `uv run python -m app.cli run` |
+| `make ui` | `uv run streamlit run ui\streamlit_app.py` |
+| `make test` | `uv run pytest -q` |
+| `make eval` | `uv run python -m app.cli eval` |
+
 ## How it works
 
 ```mermaid
@@ -107,10 +121,18 @@ Streamlit, and only then can `send_reply` write the reply to `outbox/`. Every st
 
 ## Owner approval screen
 
-`make ui` opens the queue (filter by status) and an inquiry detail page with the original email, router label
-and confidence, extracted fields, the editable draft and a preview of what the customer will receive, cited
-sources, tool calls and results, guardrail verdicts, and a timeline with trace cost and latency. Buttons:
-**Approve & send**, **Edit, approve & send**, **Reject**, and **Review blocked item**. Approved replies are
+`make ui` opens a light, minimal review screen (Geist font and Lucide icons, both bundled, so the page makes no
+outside requests; Streamlit usage statistics are turned off in `.streamlit/config.toml`).
+
+- **Inbox:** filter chips (Needs review, Pending approval, Owner queue, Blocked, In progress, Sent, Rejected, All),
+  one row per inquiry with a status chip, the reason it needs attention, its type and an **Open** button.
+- **Inquiry:** the customer email, what the assistant understood (type, confidence, extracted details, or which
+  safety checks stopped it), the editable draft with a "Customer will receive" preview, and an evidence panel with
+  cited sources, tool calls (including the itemized quote), safety checks and a timeline with cost and latency.
+- **Buttons:** **Approve & send**, **Edit, approve & send**, **Reject**, **Review blocked item**, and **Move to owner
+  queue** for items whose processing was interrupted.
+
+Customer text is always HTML-escaped before display (some emails are prompt-injection attempts). Approved replies are
 written to `outbox/<inquiry_id>.eml` as threaded replies with citation markers removed; every decision is
 logged with a timestamp. The UI never calls the model and never holds the API key.
 
