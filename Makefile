@@ -1,7 +1,7 @@
 # Golden Hour Assistant. Targets are added phase by phase.
 PY := .venv/bin/python
 
-.PHONY: setup index run mcp-demo test test-live extract eval-retrieval
+.PHONY: setup index run ui queue mcp-demo test test-live extract eval-retrieval
 
 setup:            ## create .venv and install dependencies (needs uv)
 	uv sync
@@ -12,6 +12,12 @@ index:            ## chunk + embed policy docs into var/index (calls Gemini, cac
 
 run:              ## process data/emails through the full pipeline (calls Gemini)
 	$(PY) -m app.cli run
+
+ui:               ## owner approval screen (Streamlit; never holds the API key)
+	.venv/bin/streamlit run ui/streamlit_app.py
+
+queue:            ## list inquiries and their status
+	$(PY) -m app.cli queue
 
 mcp-demo:         ## prove the MCP server works with a generic MCP client
 	$(PY) -m app.mcp_server.demo_client

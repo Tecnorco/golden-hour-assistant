@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.adapters.eml import EmlAdapter
 from app.config import get_settings
-from app.models import new_id, utcnow
+from app.models import InquiryStatus, new_id, utcnow
 from app.observability import tracing
 from app.store import Store
 
@@ -165,6 +165,9 @@ def cmd_quote(args: argparse.Namespace) -> int:
 async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> list:
     """Run the full pipeline over .eml files. Business tools are reached over MCP."""
     from app.agents.base import AgentDeps, load_brand_voice
+    from app.guardrails.input import make_input_guard
+    from app.guardrails.output import output_guard
+    from app.guardrails.repair import make_repairer
     from app.llm.client import GeminiLLM
     from app.mcp_server.client import MCPToolbox, server_params
     from app.orchestrator import Pipeline
@@ -179,7 +182,12 @@ async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> li
     async with MCPToolbox(server_params(settings.data_dir, settings.db_path)) as toolbox:
         deps = AgentDeps(llm=llm, toolbox=toolbox, retriever=retriever,
                          brand_voice=load_brand_voice(settings.data_dir), max_steps=settings.agent_max_steps)
-        pipeline = Pipeline(store=store, deps=deps, settings=settings)
+        pipeline = Pipeline(
+            store=store, deps=deps, settings=settings,
+            input_guard=make_input_guard(llm, settings),
+            output_guard=output_guard,
+            repair=make_repairer(deps),
+        )
         for path in paths:
             out = await pipeline.process(adapter.parse(path))
             outcomes.append((path, out))
@@ -193,6 +201,37 @@ async def build_pipeline_and_run(paths: list[Path], verbose: bool = False) -> li
 
 def cmd_run(args: argparse.Namespace) -> int:
     asyncio.run(build_pipeline_and_run(_emails(args.paths), verbose=args.verbose))
+    return 0
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    store = _store()
+    rows = store.list_inquiries(args.status)
+    for r in rows:
+        inq = store.get_inquiry(r["id"])
+        print(f"{r['id']}  {r['status']:17s} {inq.subject[:50] if inq else '':50s} {(r['owner_note'] or '')[:60]}")
+    print(f"{len(rows)} item(s)")
+    return 0
+
+
+def cmd_decide(args: argparse.Namespace) -> int:
+    """CLI approval loop (fallback for the Streamlit screen)."""
+    from app.models import Decision
+    from app.orchestrator import record_decision, send_reply
+
+    settings = get_settings()
+    store = _store()
+    draft = store.latest_draft(args.inquiry_id)
+    if draft is not None:
+        print(f"Subject: {draft.subject}\n\n{draft.body}\n")
+    edited = Path(args.edited_file).read_text(encoding="utf-8") if args.edited_file else None
+    action = "edit_approve" if edited else args.action
+    record_decision(store, Decision(inquiry_id=args.inquiry_id, action=action, edited_body=edited, note=args.note or ""))
+    if action != "reject":
+        path = send_reply(store, EmlAdapter(outbox_dir=settings.outbox_dir), args.inquiry_id)
+        print(f"Approved and written to {path}")
+    else:
+        print("Rejected. Nothing sent.")
     return 0
 
 
@@ -212,6 +251,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="*")
     p.add_argument("-v", "--verbose", action="store_true", help="print drafts")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("queue", help="list inquiries (optionally by status)")
+    p.add_argument("--status", choices=[s.value for s in InquiryStatus])
+    p.set_defaults(func=cmd_queue)
+
+    p = sub.add_parser("decide", help="approve / edit-and-approve / reject a draft (CLI approval)")
+    p.add_argument("inquiry_id")
+    p.add_argument("action", choices=["approve", "reject"])
+    p.add_argument("--edited-file", help="send this text instead of the draft (edit and approve)")
+    p.add_argument("--note", default="")
+    p.set_defaults(func=cmd_decide)
 
     p = sub.add_parser("quote", help="run extraction + quote agent on .eml files (calls Gemini)")
     p.add_argument("paths", nargs="*")
