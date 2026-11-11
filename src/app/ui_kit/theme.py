@@ -234,10 +234,10 @@ div[class*="st-key-row_"] [data-testid="stHorizontalBlock"] {{ align-items: cent
 .gh-table tr.gh-total td {{ font-weight: 600; border-bottom: 0; padding-top: 8px; }}
 
 /* buttons: black pills for primary, quiet pills for the rest */
-.stButton button, .stDownloadButton button {{ border-radius: 999px !important; font-weight: 500; padding: 6px 16px; min-height: 36px;
+.stButton button, .stDownloadButton button, .stFormSubmitButton button {{ border-radius: 999px !important; font-weight: 500; padding: 6px 16px; min-height: 36px;
   box-shadow: none; transition: transform .06s ease, background .12s ease; }}
-.stButton button[kind="primary"] {{ background: {INK} !important; border: 1px solid {INK} !important; color: #FFFFFF !important; }}
-.stButton button[kind="primary"]:hover {{ background: #000 !important; }}
+.stButton button[kind="primary"], .stFormSubmitButton button[kind*="primary"] {{ background: {INK} !important; border: 1px solid {INK} !important; color: #FFFFFF !important; }}
+.stButton button[kind="primary"]:hover, .stFormSubmitButton button[kind*="primary"]:hover {{ background: #000 !important; }}
 .stButton button[kind="secondary"] {{ background: #FFFFFF !important; border: 1px solid {LINE} !important; color: {INK} !important; }}
 .stButton button[kind="secondary"]:hover {{ border-color: #D9D4CA !important; background: #FDFCFA !important; }}
 .stButton button[kind="tertiary"] {{ color: {MUTED} !important; padding-left: 4px; }}

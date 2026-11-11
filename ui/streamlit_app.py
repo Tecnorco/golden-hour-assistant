@@ -26,12 +26,13 @@ import streamlit as st  # noqa: E402
 
 from app.adapters.eml import EmlAdapter  # noqa: E402
 from app.agents.base import cited_ids  # noqa: E402
-from app.config import get_settings  # noqa: E402
+from app.config import ROOT, get_settings  # noqa: E402
 from app.guardrails.output import strip_citations  # noqa: E402
 from app.models import Decision, Draft, InquiryStatus  # noqa: E402
 from app.observability import tracing  # noqa: E402
 from app.orchestrator import InvalidTransition, SendBlocked, record_decision, send_reply, transition  # noqa: E402
 from app.store import Store  # noqa: E402
+from app.ui_kit import auth, demo  # noqa: E402
 from app.ui_kit.theme import (  # noqa: E402
     CSS, IN_PROGRESS, MUTED, PRESET_DOT_CSS, PRESETS, STATUS, button_icon_css, card_title, display_name, esc, icon,
     route_chip, status_chip,
@@ -55,9 +56,13 @@ def _store(path: str) -> Store:
     return Store(path)
 
 
+def _secret(name: str) -> object:
+    return st.secrets.get(name)  # raises when no secrets file exists; auth/demo handle that
+
+
 settings = get_settings()
-store = _store(str(settings.db_path))
-tracing.set_sink(store)
+snapshot = demo.resolve_snapshot(auth._setting("GHA_DEMO_SNAPSHOT", _secret), ROOT)
+demo.ensure_demo_db(settings.db_path, snapshot)
 
 st.session_state.setdefault("page", "inbox")
 st.session_state.setdefault("preset", "Needs review")
@@ -79,6 +84,20 @@ def pick_changed() -> None:
     st.session_state["selected"] = st.session_state["detail_pick"]
 
 
+def sign_out() -> None:
+    auth.logout(st.session_state)
+
+
+def reset_demo_data() -> None:
+    assert snapshot is not None
+    _store.clear()  # close the cached connection before replacing the file
+    demo.reset_demo(settings.db_path, snapshot, settings.outbox_dir)
+    for key in ("selected", "detail_pick"):
+        st.session_state.pop(key, None)
+    st.session_state["page"] = "inbox"
+    st.session_state["flash_inbox"] = "Demo data reset: all 20 sample inquiries are back to their original state."
+
+
 # ---------------------------------------------------------------- styles
 
 page = st.session_state["page"]
@@ -90,11 +109,41 @@ st.html(
     + button_icon_css(".st-key-approve", "check") + button_icon_css(".st-key-edit_approve", "pencil-line")
     + button_icon_css(".st-key-reject", "x") + button_icon_css(".st-key-unblock", "undo-2")
     + button_icon_css(".st-key-to_owner", "user-round")
+    + button_icon_css(".st-key-nav_logout", "log-out") + button_icon_css(".st-key-nav_reset", "rotate-ccw")
     + f".st-key-nav_{page} button{{background:#FFFFFF !important;color:#18181B !important;"
     "box-shadow:0 1px 2px rgba(24,24,27,.06),0 0 0 1px #ECE8E1}"
     + "</style>"
 )
 
+# ---------------------------------------------------------------- login gate (nothing below runs until signed in)
+
+
+def render_login() -> None:
+    st.html("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl']{display:none}"
+            ".block-container{max-width:440px;padding-top:12vh}</style>")
+    with st.container(key="card_login"):
+        st.html(f'<div class="gh-brand">Golden Hour</div><div class="gh-brand-sub">Reply assistant</div>'
+                f'<div class="gh-title" style="font-size:24px;margin-top:18px">Sign in</div>'
+                f'<div class="gh-subtitle" style="margin-bottom:6px">Review and approve customer replies.</div>')
+        with st.form("login", border=False):
+            username = st.text_input("Username", key="login_user", autocomplete="username")
+            password = st.text_input("Password", type="password", key="login_pass", autocomplete="current-password")
+            submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True, key="login_submit")
+        if submitted:
+            error = auth.try_login(st.session_state, username, password, _secret)
+            if error is None:
+                st.rerun()
+            st.html(f'<div class="gh-callout gh-callout-warn">{icon("lock-keyhole", 16)}<div>{esc(error)}</div></div>')
+        st.html(f'<div class="gh-footnote">{icon("shield-check", 14, MUTED)}<span>Demo access. Nothing is sent without '
+                'an approval from a signed-in reviewer.</span></div>')
+
+
+if not st.session_state.get("authenticated"):
+    render_login()
+    st.stop()
+
+store = _store(str(settings.db_path))
+tracing.set_sink(store)
 rows = store.list_inquiries()
 counts: dict[str, int] = {}
 for r in rows:
@@ -128,7 +177,12 @@ with st.sidebar:
             stats.append(f'<div class="gh-stat">{icon(style.icon, 15, style.color)}<span>{esc(style.label)}</span>'
                          f'<span class="gh-count">{merged[style.label]}</span></div>')
     st.html('<div class="gh-section">Overview</div>' + ("".join(stats) or '<div class="gh-stat gh-muted">No inquiries yet</div>')
-            + f'<div class="gh-footnote">{icon("shield-check", 14, MUTED)}<span>Nothing is sent without your approval.</span></div>')
+            + f'<div class="gh-footnote">{icon("shield-check", 14, MUTED)}<span>Nothing is sent without your approval.</span></div>'
+            + '<div class="gh-section">Account</div>')
+    if snapshot is not None:
+        st.button("Reset demo data", key="nav_reset", on_click=reset_demo_data, use_container_width=True)
+    st.button(f"Sign out ({st.session_state.get('user', 'admin')})", key="nav_logout", on_click=sign_out,
+              use_container_width=True)
 
 # ---------------------------------------------------------------- inbox page
 
@@ -142,6 +196,8 @@ def render_inbox() -> None:
         n = sum(counts.get(s, 0) for s in statuses)
         return f"{name}  {n}" if name != "All" else f"All  {len(rows)}"
 
+    if "flash_inbox" in st.session_state:
+        st.html(f'<div class="gh-callout gh-callout-ok">{icon("circle-check", 16)}<div>{esc(st.session_state.pop("flash_inbox"))}</div></div>')
     st.pills("Filter", list(PRESETS), key="preset", format_func=label, label_visibility="collapsed")
     chosen = st.session_state.get("preset") or "Needs review"
     shown = [r for r in rows if r["status"] in PRESETS[chosen][0]]

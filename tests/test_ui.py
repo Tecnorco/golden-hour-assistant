@@ -36,11 +36,14 @@ def seeded(monkeypatch):
 
 
 def _inbox():
-    return AppTest.from_file(APP, default_timeout=30).run()
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["authenticated"] = True
+    return at.run()
 
 
 def _detail(inquiry_id):
     at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["authenticated"] = True
     at.session_state["page"] = "detail"
     at.session_state["selected"] = inquiry_id
     at.session_state["detail_pick"] = inquiry_id
