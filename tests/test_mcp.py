@@ -27,12 +27,12 @@ async def _with_toolbox(fn, db=None):
 
 def test_lists_tools_and_converts_to_gemini_declarations():
     specs = asyncio.run(_with_toolbox(lambda tb: tb.list_tools()))
-    assert {s.name for s in specs} == {"lookup_distance", "check_availability", "calculate_quote", "save_draft"}
+    assert {s.name for s in specs} == {"lookup_distance", "check_availability", "calculate_quote", "list_packages", "save_draft"}
     quote = next(s for s in specs if s.name == "calculate_quote")
     assert set(quote.parameters["required"]) == {"package", "event_date", "distance_miles"}
     assert "enum" in str(quote.parameters["properties"]["package"])
     decls = to_function_declarations(specs)[0].function_declarations
-    assert len(decls) == 4 and all(d.parameters_json_schema for d in decls)
+    assert len(decls) == 5 and all(d.parameters_json_schema for d in decls)
 
 
 def test_quote_over_mcp_matches_golden_total():

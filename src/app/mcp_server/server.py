@@ -23,8 +23,8 @@ from mcp.server.mcpserver import MCPServer
 from app.models import AddOn
 from app.store import Store
 from app.tools import (
-    DESCRIPTIONS, CalculateQuoteInput, CheckAvailabilityInput, LookupDistanceInput, PackageName, SaveDraftInput,
-    ToolContext, validation_error, tool_calculate_quote, tool_check_availability, tool_lookup_distance, tool_save_draft,
+    DESCRIPTIONS, CalculateQuoteInput, CheckAvailabilityInput, ListPackagesInput, LookupDistanceInput, PackageName, SaveDraftInput,
+    ToolContext, validation_error, tool_calculate_quote, tool_check_availability, tool_list_packages, tool_lookup_distance, tool_save_draft,
 )
 
 
@@ -67,6 +67,10 @@ def build_server(ctx: ToolContext) -> MCPServer:
         except ValidationError as exc:
             return validation_error(exc)
         return tool_calculate_quote(ctx, inp)
+
+    @mcp.tool(description=DESCRIPTIONS["list_packages"])
+    def list_packages() -> dict[str, Any]:
+        return tool_list_packages(ctx, ListPackagesInput())
 
     @mcp.tool(description=DESCRIPTIONS["save_draft"])
     def save_draft(

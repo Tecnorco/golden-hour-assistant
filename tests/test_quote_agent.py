@@ -73,7 +73,7 @@ def test_availability_tool_never_leaks_client_names():
 
 def test_tool_specs_are_json_schema():
     specs = {s.name: s for s in asyncio.run(LocalToolbox(ctx()).list_tools())}
-    assert set(specs) == {"lookup_distance", "check_availability", "calculate_quote", "save_draft"}
+    assert set(specs) == {"lookup_distance", "check_availability", "calculate_quote", "list_packages", "save_draft"}
     assert "distance_miles" in specs["calculate_quote"].parameters["required"]
 
 
@@ -119,7 +119,7 @@ def test_missing_details_only_allow_a_clarifying_draft():
     assert res.status == "drafted" and res.draft.needs_info is True
     assert res.missing == ["service_type", "event_date"]
     assert [t.name for t in llm.calls[0]["tools"]] == ["save_draft"]
-    assert "not available" in res.tool_calls[0].error  # quoting was refused
+    assert "not available" in next(r for r in res.tool_calls if r.name == "calculate_quote").error  # quoting was refused
     prompt = llm.calls[0]["turns"][0].text
     assert "MISSING DETAILS" in prompt and "date of the shoot" in prompt
 
@@ -196,3 +196,16 @@ def test_prose_instead_of_finishing_gets_one_nudge_then_aborts():
 def test_failed_terminal_call_does_not_finish():
     # save_draft without inquiry_id fails validation; repeating it trips the loop guard
     assert _loop([SAVE, SAVE, SAVE]).status == "loop_detected"
+
+
+def test_clarifying_reply_gets_package_catalog_as_recorded_evidence():
+    fields = ExtractedFields(service_type="event", event_date=date(2027, 1, 23), location="Riverbend")
+    llm = FakeLLM({"quote_agent": [SAVE]})
+    inq = EmlAdapter().parse(EMAILS / "v03_event_missing_hours.eml")
+    res = asyncio.run(run_quote_agent(inq, fields, deps(llm, ctx())))
+    assert res.tool_calls[0].name == "list_packages"
+    event = next(p for p in res.tool_calls[0].result["packages"] if p["key"] == "event")
+    assert event["min_hours"] == 2 and "price" not in str(res.tool_calls[0].result)
+    assert res.draft.tool_results[0].name == "list_packages"  # stored with the draft for judge/audit
+    assert "Package catalog" in llm.calls[0]["turns"][0].text
+    assert "2-hour" not in llm.calls[0]["turns"][0].text.split("Package catalog")[0]  # no facts hidden in labels

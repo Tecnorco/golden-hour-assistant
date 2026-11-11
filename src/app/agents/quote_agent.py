@@ -21,12 +21,13 @@ from app.models import Draft, ExtractedFields, Inquiry, ToolCallRecord, missing_
 from app.observability.tracing import current_trace_id, span
 from app.tools import CompositeToolbox
 
+# Labels only; any facts (package names, minimums) come from the list_packages
+# tool result, so they are on record as evidence, not hidden in this prompt.
 MISSING_LABELS = {
-    "service_type": "which service they would like (mini or standard portrait session, event coverage, "
-    "or a half-day or full-day wedding)",
+    "service_type": "which package they would like (you may list the packages from the package catalog)",
     "event_date": "the date of the shoot or event",
     "location": "the town or venue where it will take place",
-    "hours": "how many hours of event coverage they need (2-hour minimum)",
+    "hours": "how many hours of event coverage they need (you may mention the minimum from the package catalog)",
 }
 
 QUOTE_TOOLS = {"lookup_distance", "check_availability", "calculate_quote", "search_policies", "save_draft"}
@@ -79,7 +80,9 @@ def verify_quote_calls(fields: ExtractedFields, records: list[ToolCallRecord]) -
     return issues
 
 
-def build_user_message(inq: Inquiry, fields: ExtractedFields, missing: list[str]) -> str:
+def build_user_message(
+    inq: Inquiry, fields: ExtractedFields, missing: list[str], catalog: dict[str, Any] | None = None
+) -> str:
     name = first_name(inq.sender) or 'unknown (greet with "Hi there,")'
     parts = [
         f"Customer first name: {name}",
@@ -91,6 +94,9 @@ def build_user_message(inq: Inquiry, fields: ExtractedFields, missing: list[str]
     if missing:
         parts.append("MISSING DETAILS - ask the customer for all of these, do not quote:")
         parts += [f"- {MISSING_LABELS.get(m, m)}" for m in missing]
+        if catalog:
+            parts.append("Package catalog (from the list_packages tool; no prices):")
+            parts.append(json.dumps({k: catalog[k] for k in ("packages", "add_ons") if k in catalog}, indent=1))
     else:
         parts.append("All required details are present. Follow the full quote process.")
     parts.append(render_untrusted(inq))
@@ -103,11 +109,18 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
     with span("quote_agent", input={"missing": missing, "prompt_version": prompt.version}) as s:
         toolbox = CompositeToolbox(deps.toolbox, [policy_search_tool(deps.retriever)])
         allowed = {"save_draft"} if missing else QUOTE_TOOLS
+        # Clarifying replies may describe packages; fetch them as recorded evidence (code-initiated call).
+        pre: list[ToolCallRecord] = []
+        catalog = None
+        if missing:
+            catalog = await deps.toolbox.call("list_packages", {})
+            pre.append(ToolCallRecord(name="list_packages", args={}, result=catalog,
+                                      error=None if catalog.get("ok") else catalog.get("error")))
 
         def owned(records: list[ToolCallRecord]) -> dict[str, Any]:
             return {
                 "inquiry_id": inq.id,
-                "tool_results": [r.model_dump(mode="json") for r in records],
+                "tool_results": [r.model_dump(mode="json") for r in pre + records],
                 "needs_info": compute_needs_info(missing, records),
             }
 
@@ -115,7 +128,7 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
             llm=deps.llm,
             prompt_name="quote_agent",
             system=f"{prompt.text}\n\n# Brand voice guide\n{deps.brand_voice}",
-            user_message=build_user_message(inq, fields, missing),
+            user_message=build_user_message(inq, fields, missing, catalog),
             toolbox=toolbox,
             allowed_tools=allowed,
             max_steps=deps.max_steps,
@@ -124,7 +137,7 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
         retrieved = retrieved_ids(loop.records)
         result = AgentResult(
             agent="quote", status="needs_owner", missing=missing, steps=loop.steps,
-            tool_calls=loop.records, retrieved_chunk_ids=retrieved,
+            tool_calls=pre + loop.records, retrieved_chunk_ids=retrieved,
         )
         if loop.status != "finished" or loop.final_args is None:
             result.reason = f"agent loop ended without a draft: {loop.status}"
@@ -134,7 +147,7 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
         fa = loop.final_args
         result.draft = Draft(
             inquiry_id=inq.id, subject=fa.get("subject", ""), body=fa.get("body", ""),
-            sources=list(fa.get("sources") or []), tool_results=loop.records,
+            sources=list(fa.get("sources") or []), tool_results=pre + loop.records,
             agent_trace_id=current_trace_id(), needs_info=bool(fa.get("needs_info")), agent="quote",
         )
         if not result.draft.needs_info:

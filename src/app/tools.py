@@ -55,6 +55,10 @@ class SaveDraftInput(BaseModel):
     needs_info: bool = Field(False, description="True if the reply asks the customer for missing details.")
 
 
+class ListPackagesInput(BaseModel):
+    """No arguments."""
+
+
 class SearchPoliciesInput(BaseModel):
     query: str = Field(description="What policy information you need, as a short question.")
 
@@ -66,6 +70,8 @@ DESCRIPTIONS = {
     "blocked (studio closed) or past.",
     "calculate_quote": "Calculate an itemized price quote with weekend surcharge, travel fee, total and deposit. "
     "This is the only source of prices; never do price arithmetic yourself.",
+    "list_packages": "List the studio's packages and add-ons (names, what is included, minimum hours). "
+    "No prices: quotes always come from calculate_quote.",
     "save_draft": "Save the finished reply draft for the owner to review. Call exactly once, at the end.",
     "search_policies": "Search the studio's policy documents. Returns chunks with chunk_id to cite in [brackets].",
 }
@@ -111,6 +117,19 @@ def tool_calculate_quote(ctx: ToolContext, inp: CalculateQuoteInput) -> dict[str
     return {"ok": True, **q.model_dump(mode="json")}
 
 
+def tool_list_packages(ctx: ToolContext, inp: ListPackagesInput) -> dict[str, Any]:
+    pl = ctx.price_list
+    return {
+        "ok": True,
+        "packages": [
+            {"key": k, "name": p.name, "includes": p.includes, **({"min_hours": p.min_hours} if p.min_hours else {})}
+            for k, p in pl.packages.items()
+        ],
+        "add_ons": [{"key": k, "name": a.name, **({"only_for": a.allowed_for} if a.allowed_for else {})}
+                    for k, a in pl.add_ons.items()],
+    }
+
+
 def tool_save_draft(ctx: ToolContext, inp: SaveDraftInput) -> dict[str, Any]:
     draft = Draft(
         inquiry_id=inp.inquiry_id,
@@ -130,6 +149,7 @@ BUSINESS_TOOLS: dict[str, tuple[type[BaseModel], Callable[[ToolContext, Any], di
     "lookup_distance": (LookupDistanceInput, tool_lookup_distance),
     "check_availability": (CheckAvailabilityInput, tool_check_availability),
     "calculate_quote": (CalculateQuoteInput, tool_calculate_quote),
+    "list_packages": (ListPackagesInput, tool_list_packages),
     "save_draft": (SaveDraftInput, tool_save_draft),
 }
 
