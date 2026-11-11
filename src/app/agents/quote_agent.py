@@ -10,22 +10,16 @@ The LLM plans and writes; code decides the facts:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import date
-from pathlib import Path
-from typing import Any, Literal
-
-from pydantic import BaseModel, Field
+from typing import Any
 
 from app.adapters.eml import first_name
+from app.agents.base import AgentDeps, AgentResult, load_brand_voice, policy_search_tool, retrieved_ids
 from app.agents.common import render_untrusted
 from app.agents.loop import LoopResult, run_tool_loop
-from app.llm.client import LLM
 from app.llm.prompts import load_prompt
 from app.models import Draft, ExtractedFields, Inquiry, ToolCallRecord, missing_quote_fields
 from app.observability.tracing import current_trace_id, span
-from app.rag.retriever import Retriever
-from app.tools import CompositeToolbox, FunctionTool, SearchPoliciesInput, Toolbox
+from app.tools import CompositeToolbox
 
 MISSING_LABELS = {
     "service_type": "which service they would like (mini or standard portrait session, event coverage, "
@@ -36,46 +30,6 @@ MISSING_LABELS = {
 }
 
 QUOTE_TOOLS = {"lookup_distance", "check_availability", "calculate_quote", "search_policies", "save_draft"}
-
-
-@dataclass
-class AgentDeps:
-    llm: LLM
-    toolbox: Toolbox  # business tools (MCP in the app, local in tests)
-    retriever: Retriever | None
-    brand_voice: str
-    max_steps: int = 8
-
-
-class AgentResult(BaseModel):
-    agent: str
-    status: Literal["drafted", "needs_owner"]
-    reason: str = ""
-    draft: Draft | None = None
-    missing: list[str] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    steps: int = 0
-    tool_calls: list[ToolCallRecord] = Field(default_factory=list)
-    retrieved_chunk_ids: list[str] = Field(default_factory=list)
-
-
-def load_brand_voice(data_dir: Path) -> str:
-    return (data_dir / "docs" / "brand-voice.md").read_text(encoding="utf-8")
-
-
-def policy_search_tool(retriever: Retriever | None) -> FunctionTool:
-    async def search(inp: SearchPoliciesInput) -> dict[str, Any]:
-        if retriever is None:
-            return {"ok": True, "chunks": [], "note": "policy search unavailable"}
-        hits = await retriever.retrieve(inp.query)
-        if not hits:
-            return {"ok": True, "chunks": [], "note": "No relevant policy found. Do not state this policy."}
-        return {
-            "ok": True,
-            "chunks": [{"chunk_id": h.chunk_id, "heading": h.heading, "text": h.text, "score": h.score} for h in hits],
-        }
-
-    return FunctionTool("search_policies", SearchPoliciesInput, search)
 
 
 def _last_ok(records: list[ToolCallRecord], name: str) -> ToolCallRecord | None:
@@ -167,10 +121,7 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
             max_steps=deps.max_steps,
             owned_args=owned,
         )
-        retrieved = sorted(
-            {c["chunk_id"] for r in loop.records if r.name == "search_policies" and isinstance(r.result, dict)
-             for c in r.result.get("chunks", [])}
-        )
+        retrieved = retrieved_ids(loop.records)
         result = AgentResult(
             agent="quote", status="needs_owner", missing=missing, steps=loop.steps,
             tool_calls=loop.records, retrieved_chunk_ids=retrieved,
@@ -194,3 +145,6 @@ async def run_quote_agent(inq: Inquiry, fields: ExtractedFields, deps: AgentDeps
             result.status = "drafted"
         s.output = {"status": result.status, "needs_info": result.draft.needs_info, "issues": result.issues}
         return result
+
+
+__all__ = ["AgentDeps", "AgentResult", "load_brand_voice", "run_quote_agent", "verify_quote_calls", "compute_needs_info"]
