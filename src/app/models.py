@@ -123,9 +123,14 @@ class QuoteLine(BaseModel):
 
 class QuoteResult(BaseModel):
     package: str
+    package_name: str
+    event_date: date
+    is_weekend: bool
+    distance_miles: float
     lines: list[QuoteLine]
     total: float
     deposit: float
+    deposit_pct: int
     notes: list[str] = Field(default_factory=list)
 
 
